@@ -13,36 +13,60 @@ document.querySelectorAll(".nav").forEach(btn=>{
 function esc(v){return String(v??"—").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function speed(v){if(!v)return "—";return v>=1000?(v/1000)+" Gbps":v+" Mbps"}
 function retryClass(v){if(v==null)return "";if(v>=20)return "bad";if(v>=10)return "warn";return "good"}
+function fmtTime(v){try{return new Date(v).toLocaleTimeString([],{hour:"numeric",minute:"2-digit",second:"2-digit"})}catch{return "—"}}
+function maxRetry(ap){
+  const r=((((ap.statistics||{}).interfaces)||{}).radios)||[];
+  const vals=r.map(x=>x.txRetriesPct).filter(x=>typeof x==="number");
+  return vals.length?Math.max(...vals):null;
+}
 
 async function loadReport(){
   try{
-    const r=await fetch("/api/report");
+    const r=await fetch("/api/report",{cache:"no-store"});
     const d=await r.json();
     if(!d.ok)throw new Error(d.error||"API error");
     report=d;
     document.getElementById("controllerPill").textContent="Controller connected";
+    document.getElementById("controllerPill").className="pill good";
+    document.getElementById("lastChecked").textContent="Last checked "+fmtTime(d.lastChecked);
     document.getElementById("deviceCount").textContent=d.devices.length;
     document.getElementById("clientCount").textContent=d.clients.length;
     document.getElementById("apCount").textContent=d.accessPoints.length;
-    document.getElementById("highCount").textContent=d.analysis.high;
+    document.getElementById("healthScore").textContent=d.analysis.healthScore;
     const healthy=d.analysis.high===0;
     document.getElementById("networkStatus").textContent=healthy?"Healthy":"Needs attention";
     document.getElementById("networkStatus").className=healthy?"good":"bad";
     document.getElementById("autoSummary").textContent=d.autoOptimizeEnabled?"ON":"OFF";
     document.getElementById("autoSummary").className=d.autoOptimizeEnabled?"good":"warn";
     document.getElementById("autoToggle").checked=d.autoOptimizeEnabled;
-    renderRecommendations();renderAPs();renderBroadcasts();renderClients();renderSwitches();
+    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();
   }catch(e){
     document.getElementById("controllerPill").textContent="Controller error";
     document.getElementById("controllerPill").className="pill bad";
   }
 }
 
-function renderRecommendations(){
-  const box=document.getElementById("recommendations");box.innerHTML="";
-  const list=report.analysis.recommendations||[];
-  if(!list.length){box.innerHTML='<div class="recommendation"><b>All clear</b><div class="rec-message">No active findings.</div></div>';return}
-  list.forEach(x=>box.insertAdjacentHTML("beforeend",`<div class="recommendation ${esc(x.severity)}"><div class="rec-top"><span class="badge">${esc(x.severity)}</span><b>${esc(x.device)}</b><span class="muted">${esc(x.category)}</span></div><div class="rec-message">${esc(x.message)}</div></div>`));
+function findingHtml(x){
+  return `<div class="recommendation ${esc(x.severity)}"><div class="rec-top"><span class="badge">${esc(x.severity)}</span><b>${esc(x.device)}</b><span class="muted">${esc(x.category)}</span></div><div class="rec-message">${esc(x.message)}</div></div>`;
+}
+function renderFindingList(id,list,emptyText){
+  const box=document.getElementById(id);
+  box.innerHTML=list.length?list.map(findingHtml).join(""):`<div class="empty">${esc(emptyText)}</div>`;
+}
+function renderOverview(){
+  const apBox=document.getElementById("overviewApCards");apBox.innerHTML="";
+  report.accessPoints.forEach(ap=>{
+    const r=maxRetry(ap);
+    const cls=retryClass(r);
+    apBox.insertAdjacentHTML("beforeend",`<div class="summary-card"><h3>${esc(ap.name)}</h3><div class="muted">${esc(ap.clientCount)} clients · ${esc(ap.state)}</div><div class="big ${cls}">${r==null?"—":r.toFixed(1)+"%"}</div><div class="muted">highest current TX retry rate</div></div>`);
+  });
+  const wifiBox=document.getElementById("overviewWifiCards");wifiBox.innerHTML="";
+  report.wifiBroadcasts.forEach(w=>{
+    const st=w.optimizerStatus||{};
+    wifiBox.insertAdjacentHTML("beforeend",`<div class="summary-card"><h3>${esc(w.name)}</h3><div class="muted">${esc(w.type)}</div><div class="status-row"><span>${esc(st.detail)}</span><span class="status-tag ${esc(st.status)}">${esc(st.status)}</span></div></div>`);
+  });
+  renderFindingList("wifiFindings",report.analysis.wifiFindings||[],"No current Wi-Fi findings.");
+  renderFindingList("wiredFindings",report.analysis.wiredFindings||[],"No wired observations.");
 }
 
 function renderAPs(){
@@ -57,7 +81,7 @@ function renderAPs(){
       const retry=(sm.get(f)||{}).txRetriesPct;
       radios+=`<div class="radio"><b>${f} GHz</b><div class="metric"><span>Channel</span><span>${esc(c.channel)}</span></div><div class="metric"><span>Width</span><span>${esc(c.channelWidthMHz)} MHz</span></div><div class="metric"><span>TX retries</span><span class="${retryClass(retry)}">${retry==null?"—":retry.toFixed(1)+"%"}</span></div></div>`;
     });
-    box.insertAdjacentHTML("beforeend",`<div class="ap-card"><h3>${esc(ap.name)}</h3><div class="muted">${esc(ap.model)} · ${esc(ap.clientCount)} clients · uplink ${esc(ap.uplinkName)}</div><div class="radio-grid">${radios}</div><div class="status-row"><span>CPU ${esc(ap.statistics?.cpuUtilizationPct)}% · Memory ${esc(ap.statistics?.memoryUtilizationPct)}%</span><span class="status-tag ${ap.state==='ONLINE'?'ALREADY_OPTIMIZED':'NEEDS_ATTENTION'}">${esc(ap.state)}</span></div></div>`);
+    box.insertAdjacentHTML("beforeend",`<div class="ap-card"><h3>${esc(ap.name)}</h3><div class="muted">${esc(ap.model)} · ${esc(ap.clientCount)} clients · uplink ${esc(ap.uplinkName)}</div><div class="radio-grid">${radios}</div><div class="status-row"><span>CPU ${esc(ap.statistics?.cpuUtilizationPct)}% · Memory ${esc(ap.statistics?.memoryUtilizationPct)}%</span><span class="status-tag ${esc(ap.state)}">${esc(ap.state)}</span></div></div>`);
   });
 }
 
@@ -65,24 +89,29 @@ function boolPill(v){return v===true?'<span class="status-tag ALREADY_OPTIMIZED"
 function renderBroadcasts(){
   const box=document.getElementById("wifiBroadcastCards");box.innerHTML="";
   report.wifiBroadcasts.forEach(w=>{
-    const st=w.optimizerStatus||{};
-    const hand=w.handoffSuggestionsConfiguration||{};
+    const st=w.optimizerStatus||{};const hand=w.handoffSuggestionsConfiguration||{};
     const bands=(w.broadcastingFrequenciesGHz||[]).join(" / ")||"UniFi managed";
     box.insertAdjacentHTML("beforeend",`<div class="wifi-card"><h3>${esc(w.name)}</h3><div class="muted">${esc(w.type)} · bands ${esc(bands)}</div><div class="metric"><span>Band Steering</span><span>${boolPill(w.bandSteeringEnabled)}</span></div><div class="metric"><span>BSS Transition</span><span>${boolPill(w.bssTransitionEnabled)}</span></div><div class="metric"><span>MLO</span><span>${boolPill(w.mloEnabled)}</span></div><div class="metric"><span>5 GHz handoff</span><span>${hand.band5GHzRssiThreshold??"—"} dBm</span></div><div class="metric"><span>6 GHz handoff</span><span>${hand.band6GHzRssiThreshold??"—"} dBm</span></div><div class="status-row"><span class="muted">${esc(st.detail)}</span><span class="status-tag ${esc(st.status)}">${esc(st.status)}</span></div></div>`);
   });
 }
 
 function renderClients(){
+  const q=(document.getElementById("clientSearch")?.value||"").toLowerCase();
   const t=document.getElementById("clientTable");t.innerHTML="";
-  report.clients.forEach(c=>t.insertAdjacentHTML("beforeend",`<tr><td>${esc(c.name)}</td><td>${esc(c.ipAddress)}</td><td>${esc(c.type)}</td><td>${esc(c.uplinkDeviceName)}</td><td>${esc(c.uplinkDeviceModel)}</td></tr>`));
+  report.clients.filter(c=>[c.name,c.ipAddress,c.type,c.uplinkDeviceName,c.uplinkDeviceModel].some(v=>String(v||"").toLowerCase().includes(q)))
+  .forEach(c=>t.insertAdjacentHTML("beforeend",`<tr><td>${esc(c.name)}</td><td>${esc(c.ipAddress)}</td><td>${esc(c.type)}</td><td>${esc(c.uplinkDeviceName)}</td><td>${esc(c.uplinkDeviceModel)}</td></tr>`));
 }
+document.getElementById("clientSearch").addEventListener("input",()=>report&&renderClients());
 
 function renderSwitches(){
   const box=document.getElementById("switchContainer");box.innerHTML="";
   report.switches.forEach(sw=>{
     let rows="";
-    (((sw.interfaces||{}).ports)||[]).forEach(p=>rows+=`<tr><td>${esc(p.idx)}</td><td>${esc(p.connector)}</td><td>${esc(p.state)}</td><td>${speed(p.speedMbps)}</td><td>${speed(p.maxSpeedMbps)}</td></tr>`);
-    box.insertAdjacentHTML("beforeend",`<div class="switch-block"><h3>${esc(sw.name)}</h3><div class="muted">${esc(sw.model)} · uplink ${esc(sw.uplinkName||"Gateway")}</div><div class="panel table-wrap"><table><thead><tr><th>Port</th><th>Connector</th><th>State</th><th>Speed</th><th>Capability</th></tr></thead><tbody>${rows}</tbody></table></div></div>`);
+    (((sw.interfaces||{}).ports)||[]).forEach(p=>{
+      const observed=p.state==="UP"&&p.maxSpeedMbps>=10000&&p.speedMbps<=100?' <span class="status-tag PROTECTED">OBSERVE</span>':"";
+      rows+=`<tr><td>${esc(p.idx)}</td><td>${esc(p.connector)}</td><td>${esc(p.state)}</td><td>${speed(p.speedMbps)}${observed}</td><td>${speed(p.maxSpeedMbps)}</td></tr>`;
+    });
+    box.insertAdjacentHTML("beforeend",`<div class="switch-block"><h3>${esc(sw.name)}</h3><div class="muted">${esc(sw.model)} · uplink ${esc(sw.uplinkName||"Gateway")}</div><div class="panel table-wrap"><table><thead><tr><th>Port</th><th>Connector</th><th>State</th><th>Negotiated speed</th><th>Port capability</th></tr></thead><tbody>${rows}</tbody></table></div></div>`);
   });
 }
 
@@ -90,21 +119,18 @@ document.getElementById("autoToggle").addEventListener("change",async e=>{
   await fetch("/api/auto-optimize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:e.target.checked})});
   await loadReport();
 });
-
 document.getElementById("runOptimizeBtn").addEventListener("click",async()=>{
   const out=document.getElementById("optimizeResult");out.textContent="Running…";
-  const r=await fetch("/api/auto-optimize/run",{method:"POST"});
-  const d=await r.json();
-  if(d.ok){
-    out.textContent=d.results.map(x=>x.name+": "+x.status).join(" · ");
-  }else out.textContent="Optimization failed";
-  await loadReport();await loadHistory();
+  const btn=document.getElementById("runOptimizeBtn");btn.disabled=true;
+  try{
+    const r=await fetch("/api/auto-optimize/run",{method:"POST"});const d=await r.json();
+    out.textContent=d.ok?d.results.map(x=>x.name+": "+x.status).join(" · "):"Optimization failed";
+    await loadReport();await loadHistory();
+  }finally{btn.disabled=false}
 });
-
 async function loadHistory(){
-  const r=await fetch("/api/optimization-log");const d=await r.json();
+  const r=await fetch("/api/optimization-log",{cache:"no-store"});const d=await r.json();
   const t=document.getElementById("historyTable");t.innerHTML="";
-  (d.items||[]).forEach(x=>t.insertAdjacentHTML("beforeend",`<tr><td>${esc(x.ts)}</td><td>${esc(x.action)}</td><td>${esc(x.target)}</td><td>${esc(x.detail)}</td><td>${esc(x.result)}</td></tr>`));
+  (d.items||[]).forEach(x=>t.insertAdjacentHTML("beforeend",`<tr><td>${esc(new Date(x.ts).toLocaleString())}</td><td>${esc(x.action)}</td><td>${esc(x.target)}</td><td>${esc(x.detail)}</td><td><span class="status-tag ${esc(x.result)}">${esc(x.result)}</span></td></tr>`));
 }
-
 loadReport();setInterval(loadReport,60000);
