@@ -65,3 +65,10 @@ table{width:100%;border-collapse:collapse}th{background:#0d1726;color:var(--mute
 .channel-metrics small{margin-top:3px;text-transform:none}
 .channel-actions{margin:13px 0 0;padding-left:18px;color:#cbd7e7;font-size:12px;line-height:1.5}
 @media(max-width:800px){.channel-grid{grid-template-columns:1fr}.channel-metrics{grid-template-columns:1fr 1fr}}
+
+.test-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}
+.test-card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px}
+.test-description{margin-top:12px;color:#cbd7e7;font-size:12px;line-height:1.45}
+.test-controls,.channel-test-action{margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
+.test-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+@media(max-width:800px){.test-grid{grid-template-columns:1fr}}
