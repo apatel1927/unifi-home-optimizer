@@ -2,23 +2,21 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.8.2
+## v0.9.0
 
-- Roaming Analyzer that records real wireless client AP association changes over time
-- 24-hour roam counts, current AP, last AP change, and frequent-roaming detection
-- Explicitly avoids claiming a "best AP" from RSSI because the official connected-client API does not expose RSSI/signal telemetry
-- Redesigned Overview with health score, AP health cards, Wi-Fi status cards, separated Wi-Fi/wired findings, and last-checked time
-- Custom app/Docker icon for Unraid
-- Client search/filter
-- Smarter wired-link observations that no longer treat every 100 Mbps endpoint on a 10G-capable port as a fault
-- Cleaner Overview, Wi-Fi, Auto Optimize, Clients, Roaming, Switches, and History pages
-- AP cards with live channel, width, client count, CPU, memory, and TX retry percentage
-- Wi-Fi broadcast status: ALREADY_OPTIMIZED, NEEDS_ATTENTION, or PROTECTED
-- Safe Auto Optimize for documented UniFi Wi-Fi Broadcast settings
-- IOT_OPTIMIZED broadcasts are protected from automatic modification
-- Persistent SQLite history in `/config`
-- Docker images automatically published to GitHub Container Registry
-- Unraid template included under `unraid/`
+- Internet Health page with observed online/offline status, 24-hour availability, outage count, latency, gateway uptime, and live gateway RX/TX throughput
+- Throughput and latency history charts
+- Overview Internet status card
+- Retry health now uses a 15-minute rolling average after enough samples are available, instead of overreacting to one 60-second spike
+- Retry guidance: under 8% good, 8–15% watch, 15–25% elevated, 25%+ high
+- Roaming Analyzer with current AP, 24-hour AP-change counts, and roaming history
+- Custom Unraid/Docker icon and responsive dashboard
+- Safe Auto Optimize for documented STANDARD Wi-Fi settings; IOT_OPTIMIZED remains protected
+- Persistent SQLite history and automatic schema migrations
+
+## Internet monitoring
+
+Internet availability is probed from the UniFi Home Optimizer container on the Unraid server. Gateway uptime and RX/TX rates come from the UDM statistics exposed by the UniFi Network API. Gateway uptime is not the same thing as ISP-session uptime.
 
 ## Install on Unraid
 
