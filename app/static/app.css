@@ -388,3 +388,29 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 .chart-line-health{stroke:#7a9cff;stroke-width:2.7}
 .compact-chart{height:160px}
 .health-trend-panel{margin-bottom:2px}
+
+
+/* v0.11.0 A/B/A RF verification */
+.aba-strip{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+  margin-top:14px;
+}
+.aba-strip>div{
+  padding:11px;
+  border-radius:10px;
+  background:rgba(7,16,28,.76);
+  border:1px solid rgba(91,125,171,.13);
+}
+.aba-strip span,.aba-strip small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}
+.aba-strip b{display:block;margin:5px 0 3px;font-size:14px;color:#edf4ff}
+.aba-strip small{text-transform:none;line-height:1.35}
+.status-tag.ROLLBACK_REQUIRED,.status-tag.ROLLBACK_MONITORING{color:var(--info)}
+.status-tag.IMPROVED_CONFIRMED{color:var(--good)}
+.status-tag.WORSE_CONFIRMED{color:var(--bad)}
+.status-tag.NO_MEANINGFUL_CHANGE,
+.status-tag.INCONCLUSIVE,
+.status-tag.INCONCLUSIVE_LOAD_CHANGED,
+.status-tag.INCONCLUSIVE_ENVIRONMENT_CHANGED{color:var(--warn)}
+@media(max-width:700px){.aba-strip{grid-template-columns:1fr}}
