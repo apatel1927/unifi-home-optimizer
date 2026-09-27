@@ -2,6 +2,7 @@ import os
 import threading
 import time
 import requests
+import traceback
 from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template, request
 
@@ -11,7 +12,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.9.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.9.1"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -26,7 +27,11 @@ def report_data():
     snap = build_snapshot(api)
     if not snap:
         return None
-    retry_trends = db.ap_retry_trends(15)
+    try:
+        retry_trends = db.ap_retry_trends(15)
+    except Exception as e:
+        print("Retry trend error:", e, flush=True)
+        retry_trends = {}
     analysis = analyze(snap, retry_trends)
     aps = [d for d in snap["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     switches = [d for d in snap["devices"] if d.get("optimizerType") in ("SWITCH","GATEWAY")]
@@ -34,6 +39,17 @@ def report_data():
     wifi = []
     for w in snap["wifiBroadcasts"]:
         row=dict(w); row["optimizerStatus"]=wifi_status(w); wifi.append(row)
+    try:
+        roaming_data = db.roaming_summary(24)
+    except Exception as e:
+        print("Roaming summary error:", e, flush=True)
+        roaming_data = []
+    try:
+        internet_data = db.internet_summary(24)
+    except Exception as e:
+        print("Internet summary error:", e, flush=True)
+        internet_data = {"latest":None,"availabilityPct":None,"avgLatencyMs":None,"maxLatencyMs":None,"outageCount":0,"lastOutage":None,"onlineSince":None,"samples":[]}
+
     return {
         "ok":True,"version":VERSION,"site":snap["site"],"devices":snap["devices"],
         "accessPoints":aps,"switches":switches,"clients":snap["clients"],
@@ -42,10 +58,10 @@ def report_data():
         "lastChecked":datetime.now(timezone.utc).isoformat(),
         "pollIntervalSeconds":POLL_INTERVAL,
         "retentionDays":RETENTION_DAYS,
-        "roaming":db.roaming_summary(24),
+        "roaming":roaming_data,
         "retryTrends":retry_trends,
         "gateway":gateway,
-        "internet":db.internet_summary(24)
+        "internet":internet_data
     }
 
 def probe_internet():
@@ -99,10 +115,15 @@ def index():
 
 @app.route("/api/report")
 def report():
-    data=report_data()
-    if not data:
-        return jsonify({"ok":False,"error":"Unable to retrieve UniFi data"}),500
-    return jsonify(data)
+    try:
+        data=report_data()
+        if not data:
+            return jsonify({"ok":False,"error":"Unable to retrieve UniFi data"}),500
+        return jsonify(data)
+    except Exception as e:
+        print("Report error:", e, flush=True)
+        traceback.print_exc()
+        return jsonify({"ok":False,"error":str(e)}),500
 
 @app.route("/api/auto-optimize",methods=["POST"])
 def toggle_auto():
