@@ -83,11 +83,25 @@ class Database:
             band REAL NOT NULL,
             proposed_channel INTEGER,
             proposed_width_mhz INTEGER,
+            original_channel INTEGER,
+            original_width_mhz INTEGER,
             description TEXT,
             baseline_retry REAL,
             baseline_basis TEXT,
+            baseline_retry_60 REAL,
+            baseline_client_count REAL,
+            baseline_sample_count INTEGER,
             status TEXT NOT NULL DEFAULT 'PROPOSED',
+            phase TEXT NOT NULL DEFAULT 'PROPOSED',
             last_retry REAL,
+            post_retry_avg REAL,
+            post_client_count REAL,
+            post_sample_count INTEGER,
+            rollback_started_at TEXT,
+            rollback_retry_avg REAL,
+            rollback_client_count REAL,
+            rollback_sample_count INTEGER,
+            preliminary_result TEXT,
             result TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_optimization_tests_status
@@ -110,6 +124,27 @@ class Database:
             c.execute("ALTER TABLE ap_history ADD COLUMN retry_5 REAL")
         if "retry_6" not in ap_cols:
             c.execute("ALTER TABLE ap_history ADD COLUMN retry_6 REAL")
+
+        test_cols = {row[1] for row in c.execute("PRAGMA table_info(optimization_tests)").fetchall()}
+        test_migrations = {
+            "original_channel":"INTEGER",
+            "original_width_mhz":"INTEGER",
+            "baseline_retry_60":"REAL",
+            "baseline_client_count":"REAL",
+            "baseline_sample_count":"INTEGER",
+            "phase":"TEXT NOT NULL DEFAULT 'PROPOSED'",
+            "post_retry_avg":"REAL",
+            "post_client_count":"REAL",
+            "post_sample_count":"INTEGER",
+            "rollback_started_at":"TEXT",
+            "rollback_retry_avg":"REAL",
+            "rollback_client_count":"REAL",
+            "rollback_sample_count":"INTEGER",
+            "preliminary_result":"TEXT"
+        }
+        for col, ddl in test_migrations.items():
+            if col not in test_cols:
+                c.execute(f"ALTER TABLE optimization_tests ADD COLUMN {col} {ddl}")
 
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_optimize_enabled','0')")
         c.commit()
@@ -324,15 +359,16 @@ class Database:
         }
 
 
-    def create_optimization_test(self, ap_id, ap_name, band, proposed_channel, proposed_width_mhz, description, baseline_retry, baseline_basis):
+    def create_optimization_test(self, ap_id, ap_name, band, proposed_channel, proposed_width_mhz, original_channel, original_width_mhz, description, baseline_retry, baseline_basis, baseline_retry_60=None, baseline_client_count=None, baseline_sample_count=None):
         now=datetime.now(timezone.utc).isoformat()
         c=self.connect()
         cur=c.execute("""
             INSERT INTO optimization_tests(
                 created_at,ap_id,ap_name,band,proposed_channel,proposed_width_mhz,
-                description,baseline_retry,baseline_basis,status
-            ) VALUES(?,?,?,?,?,?,?,?,?,'PROPOSED')
-        """,(now,ap_id,ap_name,band,proposed_channel,proposed_width_mhz,description,baseline_retry,baseline_basis))
+                original_channel,original_width_mhz,description,baseline_retry,baseline_basis,
+                baseline_retry_60,baseline_client_count,baseline_sample_count,status,phase
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'PROPOSED','PROPOSED')
+        """,(now,ap_id,ap_name,band,proposed_channel,proposed_width_mhz,original_channel,original_width_mhz,description,baseline_retry,baseline_basis,baseline_retry_60,baseline_client_count,baseline_sample_count))
         test_id=cur.lastrowid
         c.commit()
         row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
@@ -344,7 +380,7 @@ class Database:
         c=self.connect()
         c.execute("""
             UPDATE optimization_tests
-            SET applied_at=?, status='MONITORING'
+            SET applied_at=?, status='MONITORING', phase='SETTLING_NEW'
             WHERE id=? AND status='PROPOSED'
         """,(now,test_id))
         c.commit()
@@ -358,7 +394,7 @@ class Database:
         c.execute("""
             UPDATE optimization_tests
             SET completed_at=?, status='CANCELLED', result='CANCELLED'
-            WHERE id=? AND status IN ('PROPOSED','MONITORING')
+            WHERE id=? AND status IN ('PROPOSED','MONITORING','ROLLBACK_REQUIRED','ROLLBACK_MONITORING')
         """,(now,test_id))
         c.commit()
         row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
@@ -459,3 +495,70 @@ class Database:
         """,(cutoff,limit)).fetchall()
         c.close()
         return list(reversed([dict(r) for r in rows]))
+
+
+    def ap_window_stats(self, device_id, band, start_iso, end_iso):
+        col={2.4:"retry_24",5:"retry_5",5.0:"retry_5",6:"retry_6",6.0:"retry_6"}.get(band)
+        if not col:
+            return {"retryAvg":None,"clientAvg":None,"sampleCount":0}
+        c=self.connect()
+        row=c.execute(f"""
+            SELECT COUNT({col}) AS n,
+                   AVG({col}) AS retry_avg,
+                   AVG(client_count) AS client_avg
+            FROM ap_history
+            WHERE device_id=? AND ts>=? AND ts<=?
+        """,(device_id,start_iso,end_iso)).fetchone()
+        c.close()
+        return {
+            "retryAvg":row["retry_avg"] if row else None,
+            "clientAvg":row["client_avg"] if row else None,
+            "sampleCount":row["n"] if row else 0
+        }
+
+    def update_test_phase(self, test_id, phase, status=None, last_retry=None, preliminary_result=None, post_stats=None):
+        c=self.connect()
+        post_stats=post_stats or {}
+        c.execute("""
+            UPDATE optimization_tests
+            SET phase=?,
+                status=COALESCE(?,status),
+                last_retry=COALESCE(?,last_retry),
+                preliminary_result=COALESCE(?,preliminary_result),
+                post_retry_avg=COALESCE(?,post_retry_avg),
+                post_client_count=COALESCE(?,post_client_count),
+                post_sample_count=COALESCE(?,post_sample_count)
+            WHERE id=?
+        """,(phase,status,last_retry,preliminary_result,post_stats.get("retryAvg"),post_stats.get("clientAvg"),post_stats.get("sampleCount"),test_id))
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
+    def start_test_rollback(self, test_id):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        c.execute("""
+            UPDATE optimization_tests
+            SET rollback_started_at=?, phase='SETTLING_ROLLBACK', status='ROLLBACK_MONITORING'
+            WHERE id=? AND status='ROLLBACK_REQUIRED'
+        """,(now,test_id))
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
+    def complete_aba_test(self, test_id, result, rollback_stats):
+        now=datetime.now(timezone.utc).isoformat()
+        rollback_stats=rollback_stats or {}
+        c=self.connect()
+        c.execute("""
+            UPDATE optimization_tests
+            SET completed_at=?, status=?, phase='COMPLETE', result=?,
+                rollback_retry_avg=?, rollback_client_count=?, rollback_sample_count=?
+            WHERE id=?
+        """,(now,result,result,rollback_stats.get("retryAvg"),rollback_stats.get("clientAvg"),rollback_stats.get("sampleCount"),test_id))
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
