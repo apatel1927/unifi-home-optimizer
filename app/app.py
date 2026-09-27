@@ -3,7 +3,7 @@ import threading
 import time
 import requests
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, render_template, request
 
 from .database import Database
@@ -12,7 +12,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, buil
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.10.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.11.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -101,6 +101,52 @@ def _trend_retry_for_band(trends, ap_id, band):
     value=t.get(key)
     return float(value) if value is not None else None
 
+def _preliminary_result(baseline, post):
+    if baseline is None or post is None:
+        return "INCONCLUSIVE"
+    delta=float(post)-float(baseline)
+    if delta <= -2.0 or float(post) <= float(baseline)*0.80:
+        return "IMPROVED"
+    if delta >= 2.0 or float(post) >= float(baseline)*1.20:
+        return "WORSE"
+    return "NO_CHANGE"
+
+def _aba_final_result(t, rollback_stats):
+    baseline=t.get("baseline_retry_60")
+    if baseline is None:
+        baseline=t.get("baseline_retry")
+    post=t.get("post_retry_avg")
+    rollback=rollback_stats.get("retryAvg")
+    if baseline is None or post is None or rollback is None:
+        return "INCONCLUSIVE"
+
+    baseline_samples=t.get("baseline_sample_count") or 0
+    post_samples=t.get("post_sample_count") or 0
+    rollback_samples=rollback_stats.get("sampleCount") or 0
+    if min(post_samples,rollback_samples) < 20 or (baseline_samples and baseline_samples < 20):
+        return "INCONCLUSIVE"
+
+    baseline_clients=t.get("baseline_client_count")
+    post_clients=t.get("post_client_count")
+    rollback_clients=rollback_stats.get("clientAvg")
+    if baseline_clients is not None and post_clients is not None:
+        if abs(float(post_clients)-float(baseline_clients)) > max(3.0,float(baseline_clients)*0.50):
+            return "INCONCLUSIVE_LOAD_CHANGED"
+    if rollback_clients is not None and post_clients is not None:
+        if abs(float(post_clients)-float(rollback_clients)) > max(3.0,float(rollback_clients)*0.50):
+            return "INCONCLUSIVE_LOAD_CHANGED"
+
+    if abs(float(rollback)-float(baseline)) > max(3.0,float(baseline)*0.35):
+        return "INCONCLUSIVE_ENVIRONMENT_CHANGED"
+
+    reference=(float(baseline)+float(rollback))/2.0
+    delta=float(post)-reference
+    if delta <= -2.0 or float(post) <= reference*0.80:
+        return "IMPROVED_CONFIRMED"
+    if delta >= 2.0 or float(post) >= reference*1.20:
+        return "WORSE_CONFIRMED"
+    return "NO_MEANINGFUL_CHANGE"
+
 def evaluate_optimization_tests(snapshot=None):
     try:
         tests=db.list_optimization_tests(100)
@@ -108,9 +154,13 @@ def evaluate_optimization_tests(snapshot=None):
     except Exception as e:
         print("Optimization test evaluation error:",e,flush=True)
         return []
+
     now=datetime.now(timezone.utc)
     for t in tests:
-        if t.get("status")=="PROPOSED" and snapshot:
+        status=t.get("status")
+        phase=t.get("phase") or "PROPOSED"
+
+        if status=="PROPOSED" and snapshot:
             live=_current_radio_config(snapshot,t.get("ap_id"),t.get("band"))
             if live:
                 channel_match=(t.get("proposed_channel") is None or live.get("channel")==t.get("proposed_channel"))
@@ -118,33 +168,89 @@ def evaluate_optimization_tests(snapshot=None):
                 if channel_match and width_match:
                     updated=db.mark_test_applied(t["id"])
                     if updated:
-                        db.log("RF_TEST_AUTO_DETECT",t.get("ap_name"),f"Detected {t.get('band')} GHz change: channel {live.get('channel')} / {live.get('widthMHz')} MHz","MONITORING")
+                        db.log("RF_TEST_AUTO_DETECT",t.get("ap_name"),str(t.get("band"))+" GHz new setting detected","MONITORING")
                         t=updated
-        if t.get("status")!="MONITORING" or not t.get("applied_at"):
-            continue
-        current=_trend_retry_for_band(trends,t.get("ap_id"),t.get("band"))
-        if current is None:
-            continue
-        applied=datetime.fromisoformat(t["applied_at"])
-        if applied.tzinfo is None:
-            applied=applied.replace(tzinfo=timezone.utc)
-        minutes=(now-applied).total_seconds()/60.0
-        baseline=t.get("baseline_retry")
-        if baseline is None:
-            db.update_optimization_test_metrics(t["id"],current)
-            continue
-        delta=current-float(baseline)
-        if minutes < 60:
-            db.update_optimization_test_metrics(t["id"],current,status="MONITORING")
-        else:
-            if delta <= -2.0 or current <= float(baseline)*0.80:
-                result="IMPROVED"
-            elif delta >= 2.0 or current >= float(baseline)*1.20:
-                result="WORSE"
-            else:
-                result="NO_CHANGE"
-            db.update_optimization_test_metrics(t["id"],current,status=result,result=result,completed=True)
-            db.log("RF_TEST_RESULT",t.get("ap_name"),str(t.get("band"))+" GHz baseline "+format(float(baseline),".1f")+"% -> "+format(current,".1f")+"% after 60+ minutes",result)
+                        status=t.get("status")
+                        phase=t.get("phase") or "SETTLING_NEW"
+
+        if status=="MONITORING" and t.get("applied_at"):
+            current=_trend_retry_for_band(trends,t.get("ap_id"),t.get("band"))
+            applied=datetime.fromisoformat(t["applied_at"])
+            if applied.tzinfo is None:
+                applied=applied.replace(tzinfo=timezone.utc)
+            minutes=(now-applied).total_seconds()/60.0
+
+            if minutes < 15:
+                db.update_test_phase(t["id"],"SETTLING_NEW",status="MONITORING",last_retry=current)
+                continue
+
+            if minutes < 75:
+                db.update_test_phase(t["id"],"MONITORING_NEW",status="MONITORING",last_retry=current)
+                continue
+
+            start_window=(applied+timedelta(minutes=15)).isoformat()
+            end_window=(applied+timedelta(minutes=75)).isoformat()
+            post_stats=db.ap_window_stats(t.get("ap_id"),t.get("band"),start_window,end_window)
+            baseline=t.get("baseline_retry_60")
+            if baseline is None:
+                baseline=t.get("baseline_retry")
+            preliminary=_preliminary_result(baseline,post_stats.get("retryAvg"))
+            updated=db.update_test_phase(
+                t["id"],"AWAITING_ROLLBACK",status="ROLLBACK_REQUIRED",
+                last_retry=current,preliminary_result=preliminary,post_stats=post_stats
+            )
+            db.log(
+                "RF_TEST_B_PHASE",
+                t.get("ap_name"),
+                str(t.get("band"))+" GHz new-setting average "+str(round(post_stats.get("retryAvg") or 0,1))+"%; rollback verification required",
+                preliminary
+            )
+            t=updated or t
+            status=t.get("status")
+
+        if status=="ROLLBACK_REQUIRED" and snapshot:
+            original_channel=t.get("original_channel")
+            original_width=t.get("original_width_mhz")
+            if original_channel is not None or original_width is not None:
+                live=_current_radio_config(snapshot,t.get("ap_id"),t.get("band"))
+                if live:
+                    channel_match=(original_channel is None or live.get("channel")==original_channel)
+                    width_match=(original_width is None or live.get("widthMHz")==original_width)
+                    if channel_match and width_match:
+                        updated=db.start_test_rollback(t["id"])
+                        if updated:
+                            db.log("RF_TEST_ROLLBACK_DETECT",t.get("ap_name"),str(t.get("band"))+" GHz original setting detected","ROLLBACK_MONITORING")
+                            t=updated
+                            status=t.get("status")
+
+        if status=="ROLLBACK_MONITORING" and t.get("rollback_started_at"):
+            rollback_started=datetime.fromisoformat(t["rollback_started_at"])
+            if rollback_started.tzinfo is None:
+                rollback_started=rollback_started.replace(tzinfo=timezone.utc)
+            minutes=(now-rollback_started).total_seconds()/60.0
+            current=_trend_retry_for_band(trends,t.get("ap_id"),t.get("band"))
+
+            if minutes < 15:
+                db.update_test_phase(t["id"],"SETTLING_ROLLBACK",status="ROLLBACK_MONITORING",last_retry=current)
+                continue
+
+            if minutes < 75:
+                db.update_test_phase(t["id"],"MONITORING_ROLLBACK",status="ROLLBACK_MONITORING",last_retry=current)
+                continue
+
+            start_window=(rollback_started+timedelta(minutes=15)).isoformat()
+            end_window=(rollback_started+timedelta(minutes=75)).isoformat()
+            rollback_stats=db.ap_window_stats(t.get("ap_id"),t.get("band"),start_window,end_window)
+            result=_aba_final_result(t,rollback_stats)
+            completed=db.complete_aba_test(t["id"],result,rollback_stats)
+            db.log(
+                "RF_TEST_ABA_RESULT",
+                t.get("ap_name"),
+                str(t.get("band"))+" GHz A/B/A verification complete",
+                result
+            )
+            t=completed or t
+
     try:
         return db.list_optimization_tests(100)
     except Exception:
@@ -250,16 +356,30 @@ def optimization_tests():
         required=["apId","apName","band"]
         if any(body.get(k) in (None,"") for k in required):
             return jsonify({"ok":False,"error":"Missing required test fields"}),400
+        band=float(body.get("band"))
+        snap=build_snapshot(api)
+        live=_current_radio_config(snap,body.get("apId"),band) if snap else None
+        now=datetime.now(timezone.utc)
+        baseline_stats=db.ap_window_stats(
+            body.get("apId"),band,
+            (now-timedelta(minutes=60)).isoformat(),
+            now.isoformat()
+        )
         trends=db.ap_retry_trends(15)
-        baseline=_trend_retry_for_band(trends,body.get("apId"),body.get("band"))
+        baseline=_trend_retry_for_band(trends,body.get("apId"),band)
         if baseline is None and body.get("baselineRetry") is not None:
             baseline=float(body.get("baselineRetry"))
+        baseline60=baseline_stats.get("retryAvg")
         item=db.create_optimization_test(
-            body.get("apId"),body.get("apName"),float(body.get("band")),
+            body.get("apId"),body.get("apName"),band,
             body.get("proposedChannel"),body.get("proposedWidthMHz"),
+            (live or {}).get("channel"),(live or {}).get("widthMHz"),
             body.get("description") or "",
             baseline,
-            body.get("baselineBasis") or ("15-min average" if baseline is not None else "unavailable")
+            body.get("baselineBasis") or ("15-min average" if baseline is not None else "unavailable"),
+            baseline60,
+            baseline_stats.get("clientAvg"),
+            baseline_stats.get("sampleCount")
         )
         return jsonify({"ok":True,"item":item})
     snap=build_snapshot(api)
