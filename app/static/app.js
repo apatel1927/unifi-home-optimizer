@@ -631,9 +631,96 @@ async function loadSystem(){
   document.getElementById("sysLastController").textContent=fmtDateTime(d.lastControllerSuccess);
   document.getElementById("sysLastCycle").textContent=fmtDateTime(d.lastMonitorCycle);
   document.getElementById("sysLastError").textContent=d.lastMonitorError||"None";
-  document.getElementById("privateRfStatus").textContent=d.privateRf?.status==="NOT_CONFIGURED"?"Read-only discovery not configured":d.privateRf?.status||"—";
-  document.getElementById("privateRfDetail").textContent=d.privateRf?.detail||"—";
+  const pr=d.privateRf||{};
+  const prStatus=document.getElementById("privateRfStatus");
+  const prDetail=document.getElementById("privateRfDetail");
+  const prCreds=document.getElementById("privateRfCreds");
+  const prToggle=document.getElementById("privateRfAutoToggle");
+  if(prStatus)prStatus.textContent=pr.status||"—";
+  if(prDetail)prDetail.textContent=pr.detail||"—";
+  if(prCreds)prCreds.textContent=pr.configured?"Configured in Unraid environment":"Missing UNIFI_PRIVATE_USERNAME / UNIFI_PRIVATE_PASSWORD";
+  if(prToggle){
+    prToggle.checked=!!pr.autoEnabled;
+    prToggle.disabled=!pr.writeVerified;
+    prToggle.title=pr.writeVerified?"":"Validate the private RF write path first";
+  }
   updateNotificationButton();
+}
+
+function showPrivateRfResult(message,good=false){
+  const box=document.getElementById("privateRfResult");
+  if(!box)return;
+  box.style.display="block";
+  box.innerHTML='<b class="'+(good?"good":"warn")+'">'+esc(message)+'</b>';
+}
+
+async function runPrivateRfDiscovery(){
+  const btn=document.getElementById("privateRfDiscoverBtn");
+  if(btn){btn.disabled=true;btn.textContent="Discovering…";}
+  try{
+    const r=await fetch("/api/private-rf/discover",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok){
+      showPrivateRfResult(d.error||"Private RF discovery failed.");
+      return;
+    }
+    const select=document.getElementById("privateRfApSelect");
+    const verify=document.getElementById("privateRfVerifyBtn");
+    if(select){
+      select.innerHTML='<option value="">Select an AP for no-op validation</option>'+
+        (d.accessPoints||[]).map(ap=>
+          '<option value="'+esc(ap.id)+'">'+esc(ap.name)+' · '+esc(ap.model||"AP")+'</option>'
+        ).join("");
+    }
+    if(verify)verify.disabled=false;
+    showPrivateRfResult("Read-only discovery succeeded: "+(d.accessPoints||[]).length+" access points exposed radio_table.",true);
+    await loadSystem();
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Run read-only discovery";}
+  }
+}
+
+async function verifyPrivateRfWrite(){
+  const select=document.getElementById("privateRfApSelect");
+  const classicId=select?.value;
+  if(!classicId){
+    showPrivateRfResult("Select an AP first.");
+    return;
+  }
+  if(!confirm("Validate the private RF write path on this AP? The payload uses the AP's existing radio settings, but UniFi may briefly reprovision the access point."))return;
+  const btn=document.getElementById("privateRfVerifyBtn");
+  if(btn){btn.disabled=true;btn.textContent="Validating…";}
+  try{
+    const r=await fetch("/api/private-rf/verify-write",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({classicId})
+    });
+    const d=await r.json();
+    if(d.ok){
+      showPrivateRfResult("Private RF write path validated. Auto RF can now be enabled.",true);
+    }else{
+      showPrivateRfResult("Write validation failed: "+(d.error||"unknown error"));
+    }
+    await loadSystem();
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Validate no-op write";}
+  }
+}
+
+async function togglePrivateRfAuto(enabled){
+  const r=await fetch("/api/private-rf/auto",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({enabled})
+  });
+  const d=await r.json();
+  if(!d.ok){
+    showPrivateRfResult(d.error||"Unable to change Auto RF state.");
+  }else{
+    showPrivateRfResult(enabled?"Experimental Auto RF enabled.":"Experimental Auto RF disabled.",true);
+  }
+  await loadSystem();
 }
 
 function updateNotificationButton(){
@@ -660,4 +747,22 @@ document.addEventListener("click",async e=>{
     localStorage.setItem("uho.notifications","0");
   }
   updateNotificationButton();
+});
+
+
+document.addEventListener("click",async e=>{
+  if(e.target.id==="privateRfDiscoverBtn"){
+    await runPrivateRfDiscovery();
+    return;
+  }
+  if(e.target.id==="privateRfVerifyBtn"){
+    await verifyPrivateRfWrite();
+    return;
+  }
+});
+
+document.addEventListener("change",async e=>{
+  if(e.target.id==="privateRfAutoToggle"){
+    await togglePrivateRfAuto(!!e.target.checked);
+  }
 });
