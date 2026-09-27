@@ -398,3 +398,29 @@ class Database:
         except Exception:
             size=None
         return {"path":self.path,"sizeBytes":size,"rowCounts":counts}
+
+
+    def ap_client_baselines(self, hours=24):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+        rows=c.execute("""
+            SELECT device_id, device_name,
+                   COUNT(*) AS sample_count,
+                   AVG(client_count) AS avg_clients,
+                   MIN(client_count) AS min_clients,
+                   MAX(client_count) AS max_clients
+            FROM ap_history
+            WHERE ts >= ?
+            GROUP BY device_id, device_name
+        """,(cutoff,)).fetchall()
+        c.close()
+        return {
+            r["device_id"]:{
+                "deviceName":r["device_name"],
+                "sampleCount":r["sample_count"],
+                "avgClients":r["avg_clients"],
+                "minClients":r["min_clients"],
+                "maxClients":r["max_clients"],
+                "windowHours":hours
+            } for r in rows
+        }
