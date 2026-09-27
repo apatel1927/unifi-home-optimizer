@@ -2,9 +2,16 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.8.1
+## v0.8.2
 
-- Redesigned Overview with health score, AP health cards, Wi-Fi status cards, separated Wi-Fi/wired findings, and last-checked time\n- Custom app/Docker icon for Unraid\n- Client search/filter\n- Smarter wired-link observations that no longer treat every 100 Mbps endpoint on a 10G-capable port as a fault\n- Cleaner Overview, Wi-Fi, Auto Optimize, Clients, Switches, and History pages
+- Roaming Analyzer that records real wireless client AP association changes over time
+- 24-hour roam counts, current AP, last AP change, and frequent-roaming detection
+- Explicitly avoids claiming a "best AP" from RSSI because the official connected-client API does not expose RSSI/signal telemetry
+- Redesigned Overview with health score, AP health cards, Wi-Fi status cards, separated Wi-Fi/wired findings, and last-checked time
+- Custom app/Docker icon for Unraid
+- Client search/filter
+- Smarter wired-link observations that no longer treat every 100 Mbps endpoint on a 10G-capable port as a fault
+- Cleaner Overview, Wi-Fi, Auto Optimize, Clients, Roaming, Switches, and History pages
 - AP cards with live channel, width, client count, CPU, memory, and TX retry percentage
 - Wi-Fi broadcast status: ALREADY_OPTIMIZED, NEEDS_ATTENTION, or PROTECTED
 - Safe Auto Optimize for documented UniFi Wi-Fi Broadcast settings
