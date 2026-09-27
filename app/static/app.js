@@ -17,10 +17,26 @@ function speed(v){if(!v)return "—";return v>=1000?(v/1000)+" Gbps":v+" Mbps"}
 function retryClass(v){if(v==null)return "";if(v>=25)return "bad";if(v>=15)return "warn";if(v>=8)return "info";return "good"}
 function fmtTime(v){try{return new Date(v).toLocaleTimeString([],{hour:"numeric",minute:"2-digit",second:"2-digit"})}catch{return "—"}}
 function maxRetry(ap){
+  const t=(report?.retryTrends||{})[ap.id];
+  if(t && t.sampleCount>=3){
+    const vals=[t.retry24,t.retry5,t.retry6].filter(x=>typeof x==="number");
+    if(vals.length)return Math.max(...vals);
+  }
   const r=((((ap.statistics||{}).interfaces)||{}).radios)||[];
   const vals=r.map(x=>x.txRetriesPct).filter(x=>typeof x==="number");
   return vals.length?Math.max(...vals):null;
 }
+function retryBasis(ap){
+  const t=(report?.retryTrends||{})[ap.id];
+  return t&&t.sampleCount>=3?(t.windowMinutes+"-min average"):"current";
+}
+function rateMbps(v){return typeof v==="number"?(v/1000000).toFixed(v>=100000000?0:1)+" Mbps":"—"}
+function duration(sec){
+  if(sec==null||!isFinite(sec)||sec<0)return "—";
+  sec=Math.floor(sec);const d=Math.floor(sec/86400);sec%=86400;const h=Math.floor(sec/3600);sec%=3600;const m=Math.floor(sec/60);
+  if(d)return d+"d "+h+"h";if(h)return h+"h "+m+"m";return m+"m";
+}
+function sinceDuration(iso){if(!iso)return "—";return duration((Date.now()-new Date(iso).getTime())/1000)}
 
 async function loadReport(){
   try{
@@ -63,7 +79,7 @@ function renderOverview(){
   report.accessPoints.forEach(ap=>{
     const r=maxRetry(ap);
     const cls=retryClass(r);
-    apBox.insertAdjacentHTML("beforeend",`<div class="summary-card"><h3>${esc(ap.name)}</h3><div class="muted">${esc(ap.clientCount)} clients · ${esc(ap.state)}</div><div class="big ${cls}">${r==null?"—":r.toFixed(1)+"%"}</div><div class="muted">highest current TX retry rate</div></div>`);
+    apBox.insertAdjacentHTML("beforeend",`<div class="summary-card"><h3>${esc(ap.name)}</h3><div class="muted">${esc(ap.clientCount)} clients · ${esc(ap.state)}</div><div class="big ${cls}">${r==null?"—":r.toFixed(1)+"%"}</div><div class="muted">highest TX retry · ${esc(retryBasis(ap))}</div></div>`);
   });
   const wifiBox=document.getElementById("overviewWifiCards");wifiBox.innerHTML="";
   report.wifiBroadcasts.forEach(w=>{
