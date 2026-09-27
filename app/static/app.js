@@ -8,12 +8,13 @@ document.querySelectorAll(".nav").forEach(btn=>{
     document.getElementById(btn.dataset.page).classList.add("active");
     if(btn.dataset.page==="history") loadHistory();
     if(btn.dataset.page==="roaming") loadRoaming();
+    if(btn.dataset.page==="internet") loadInternet();
   });
 });
 
 function esc(v){return String(v??"—").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function speed(v){if(!v)return "—";return v>=1000?(v/1000)+" Gbps":v+" Mbps"}
-function retryClass(v){if(v==null)return "";if(v>=20)return "bad";if(v>=10)return "warn";return "good"}
+function retryClass(v){if(v==null)return "";if(v>=25)return "bad";if(v>=15)return "warn";if(v>=8)return "info";return "good"}
 function fmtTime(v){try{return new Date(v).toLocaleTimeString([],{hour:"numeric",minute:"2-digit",second:"2-digit"})}catch{return "—"}}
 function maxRetry(ap){
   const r=((((ap.statistics||{}).interfaces)||{}).radios)||[];
@@ -39,8 +40,11 @@ async function loadReport(){
     document.getElementById("networkStatus").className=healthy?"good":"bad";
     document.getElementById("autoSummary").textContent=d.autoOptimizeEnabled?"ON":"OFF";
     document.getElementById("autoSummary").className=d.autoOptimizeEnabled?"good":"warn";
+    const internetLatest=d.internet?.latest;
+    document.getElementById("internetSummary").textContent=internetLatest?(internetLatest.online?"ONLINE":"OFFLINE"):"LEARNING";
+    document.getElementById("internetSummary").className=internetLatest?(internetLatest.online?"good":"bad"):"info";
     document.getElementById("autoToggle").checked=d.autoOptimizeEnabled;
-    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();renderRoamingSummary(d.roaming||[]);
+    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);
   }catch(e){
     document.getElementById("controllerPill").textContent="Controller error";
     document.getElementById("controllerPill").className="pill bad";
