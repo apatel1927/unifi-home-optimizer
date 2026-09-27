@@ -10,6 +10,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="roaming") loadRoaming();
     if(btn.dataset.page==="internet") loadInternet();
     if(btn.dataset.page==="channels") loadChannelPlan();
+    if(btn.dataset.page==="system") loadSystem();
   });
 });
 
@@ -38,6 +39,19 @@ function duration(sec){
   if(d)return d+"d "+h+"h";if(h)return h+"h "+m+"m";return m+"m";
 }
 function sinceDuration(iso){if(!iso)return "—";return duration((Date.now()-new Date(iso).getTime())/1000)}
+function humanElapsed(iso){
+  if(!iso)return {elapsed:"—",remaining:"—",done:false};
+  const sec=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);
+  const remain=Math.max(0,3600-sec);
+  return {elapsed:duration(sec),remaining:remain>0?duration(remain):"evaluation ready",done:remain<=0};
+}
+function fmtDateTime(v){try{return v?new Date(v).toLocaleString():"—"}catch{return "—"}}
+function bytes(v){
+  if(v==null)return "—";
+  const units=["B","KB","MB","GB"];let n=Number(v),i=0;
+  while(n>=1024&&i<units.length-1){n/=1024;i++}
+  return n.toFixed(i?1:0)+" "+units[i];
+}
 
 async function loadReport(){
   try{
