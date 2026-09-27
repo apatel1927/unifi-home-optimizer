@@ -51,7 +51,8 @@ def build_snapshot(api):
         "wifiBroadcasts": api.wifi_broadcasts(site_id),
     }
 
-def analyze(snapshot):
+def analyze(snapshot, retry_trends=None):
+    retry_trends = retry_trends or {}
     recs = []
     aps = [d for d in snapshot["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     avg = (sum(d.get("clientCount",0) for d in aps) / len(aps)) if aps else 0
@@ -65,18 +66,27 @@ def analyze(snapshot):
             stat_radios = ((d.get("statistics") or {}).get("interfaces") or {}).get("radios") or []
             stat_map = {r.get("frequencyGHz"):r for r in stat_radios}
 
+            trend = retry_trends.get(d.get("id")) or {}
+            trend_key = {2.4:"retry24",5:"retry5",6:"retry6"}
             for r in cfg_radios:
                 f=r.get("frequencyGHz"); width=r.get("channelWidthMHz"); ch=r.get("channel")
-                retries=(stat_map.get(f) or {}).get("txRetriesPct")
+                current=(stat_map.get(f) or {}).get("txRetriesPct")
+                averaged=trend.get(trend_key.get(f))
+                sample_count=trend.get("sampleCount",0)
+                retries=averaged if sample_count >= 3 and averaged is not None else current
+                basis=f"{trend.get('windowMinutes',15)}-min average" if sample_count >= 3 and averaged is not None else "current"
                 if f == 2.4 and width and width > 20:
                     recs.append({"severity":"MEDIUM","category":"WIFI","device":d.get("name"),
                                  "message":f"2.4 GHz is channel {ch} at {width} MHz; target 20 MHz."})
-                if retries is not None and retries >= 20:
+                if retries is not None and retries >= 25:
                     recs.append({"severity":"HIGH","category":"RETRIES","device":d.get("name"),
-                                 "message":f"{f} GHz TX retries are {retries:.1f}%."})
-                elif retries is not None and retries >= 10:
+                                 "message":f"{f} GHz TX retries are {retries:.1f}% ({basis})."})
+                elif retries is not None and retries >= 15:
                     recs.append({"severity":"MEDIUM","category":"RETRIES","device":d.get("name"),
-                                 "message":f"{f} GHz TX retries are {retries:.1f}%."})
+                                 "message":f"{f} GHz TX retries are {retries:.1f}% ({basis})."})
+                elif retries is not None and retries >= 8:
+                    recs.append({"severity":"INFO","category":"RETRIES","device":d.get("name"),
+                                 "message":f"{f} GHz TX retries are {retries:.1f}% ({basis}); watch for persistence."})
 
             if len(aps) >= 2 and avg and d.get("clientCount",0) > avg*1.8:
                 recs.append({"severity":"INFO","category":"AP_BALANCE","device":d.get("name"),
@@ -103,7 +113,7 @@ def analyze(snapshot):
     high = sum(1 for x in recs if x["severity"]=="HIGH")
     medium = sum(1 for x in recs if x["severity"]=="MEDIUM")
     info = sum(1 for x in recs if x["severity"]=="INFO")
-    health_score = max(0, 100 - high*20 - medium*6)
+    health_score = max(0, 100 - high*15 - medium*6)
     return {
         "recommendations": recs,
         "high": high,
