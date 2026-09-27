@@ -365,10 +365,16 @@ function renderOptimizationTests(items){
   items.forEach(t=>{
     const proposed=(t.proposed_channel==null?"—":t.proposed_channel)+" / "+(t.proposed_width_mhz==null?"—":t.proposed_width_mhz+" MHz");
     let controls="";
+    let timing="";
     if(t.status==="PROPOSED"){
       controls='<button class="mark-applied-btn" data-id="'+t.id+'">I made this change</button> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel</button>';
+      timing='<div class="test-timing"><span>Waiting for change</span><b>Auto-detect enabled</b></div>';
     }else if(t.status==="MONITORING"){
-      controls='<span class="muted">Monitoring for at least 60 minutes…</span>';
+      const tm=humanElapsed(t.applied_at);
+      controls='<span class="muted">Monitoring automatically…</span>';
+      timing='<div class="test-timing"><span>Started '+esc(fmtDateTime(t.applied_at))+'</span><b>'+esc(tm.elapsed)+' elapsed · '+esc(tm.remaining)+' remaining</b><div class="progress-track"><div class="progress-fill" style="width:'+Math.min(100,Math.max(0,((Date.now()-new Date(t.applied_at).getTime())/3600000)*100))+'%"></div></div></div>';
+    }else if(t.completed_at){
+      timing='<div class="test-timing"><span>Completed '+esc(fmtDateTime(t.completed_at))+'</span><b>'+esc(t.result||t.status)+'</b></div>';
     }
     const delta=(t.baseline_retry!=null&&t.last_retry!=null)?(Number(t.last_retry)-Number(t.baseline_retry)):null;
     const deltaText=delta==null?"—":(delta>0?"+":"")+delta.toFixed(1)+" pts";
@@ -383,6 +389,7 @@ function renderOptimizationTests(items){
           '<div><span>Change</span><b class="'+(delta==null?"":delta<0?"good":delta>0?"warn":"")+'">'+esc(deltaText)+'</b></div>'+
         '</div>'+
         '<div class="test-description">'+esc(t.description||"")+'</div>'+
+        timing+
         '<div class="test-controls">'+controls+'</div>'+
       '</div>');
   });
@@ -407,3 +414,9 @@ document.addEventListener("click",async e=>{
     await loadOptimizationTests();
   }
 });
+
+setInterval(()=>{
+  if(document.querySelector("#channels.page.active") && report){
+    renderOptimizationTests(report.optimizationTests||[]);
+  }
+},30000);
