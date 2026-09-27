@@ -62,6 +62,17 @@ class Database:
         );
         CREATE INDEX IF NOT EXISTS idx_roam_events_client_ts
             ON roam_events(client_id, ts);
+        CREATE TABLE IF NOT EXISTS internet_samples(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            online INTEGER NOT NULL,
+            latency_ms REAL,
+            rx_bps REAL,
+            tx_bps REAL,
+            gateway_uptime_sec INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_internet_samples_ts
+            ON internet_samples(ts);
         """)
         # Lightweight schema migrations for databases created by older releases.
         ap_cols = {row[1] for row in c.execute("PRAGMA table_info(ap_history)").fetchall()}
@@ -200,3 +211,86 @@ class Database:
         rows=c.execute("SELECT * FROM roam_events ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
         c.close()
         return [dict(r) for r in rows]
+
+
+    def ap_retry_trends(self, minutes=15):
+        cutoff=(datetime.now(timezone.utc)-timedelta(minutes=minutes)).isoformat()
+        c=self.connect()
+        rows=c.execute("""
+            SELECT device_id, device_name,
+                   COUNT(*) AS sample_count,
+                   AVG(retry_24) AS retry_24,
+                   AVG(retry_5) AS retry_5,
+                   AVG(retry_6) AS retry_6
+            FROM ap_history
+            WHERE ts >= ?
+            GROUP BY device_id, device_name
+        """,(cutoff,)).fetchall()
+        c.close()
+        return {
+            r["device_id"]:{
+                "deviceName":r["device_name"],
+                "sampleCount":r["sample_count"],
+                "retry24":r["retry_24"],
+                "retry5":r["retry_5"],
+                "retry6":r["retry_6"],
+                "windowMinutes":minutes
+            } for r in rows
+        }
+
+    def record_internet_sample(self, online, latency_ms, rx_bps, tx_bps, gateway_uptime_sec):
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        c.execute("""
+            INSERT INTO internet_samples(ts,online,latency_ms,rx_bps,tx_bps,gateway_uptime_sec)
+            VALUES(?,?,?,?,?,?)
+        """,(now,1 if online else 0,latency_ms,rx_bps,tx_bps,gateway_uptime_sec))
+        c.execute("DELETE FROM internet_samples WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def internet_summary(self, hours=24, limit=720):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+        rows=c.execute("""
+            SELECT * FROM internet_samples WHERE ts >= ? ORDER BY id ASC
+        """,(cutoff,)).fetchall()
+        recent=c.execute("""
+            SELECT * FROM internet_samples ORDER BY id DESC LIMIT ?
+        """,(limit,)).fetchall()
+        c.close()
+
+        items=[dict(r) for r in rows]
+        latest=items[-1] if items else None
+        availability=(sum(r["online"] for r in items)/len(items)*100.0) if items else None
+        online_lat=[r["latency_ms"] for r in items if r["online"] and r["latency_ms"] is not None]
+        avg_latency=(sum(online_lat)/len(online_lat)) if online_lat else None
+        max_latency=max(online_lat) if online_lat else None
+
+        outage_count=0
+        last_outage=None
+        prev=1
+        for r in items:
+            if prev==1 and r["online"]==0:
+                outage_count+=1
+                last_outage=r["ts"]
+            prev=r["online"]
+
+        online_since=None
+        for r in recent:
+            if not r["online"]:
+                break
+            online_since=r["ts"]
+
+        history=list(reversed([dict(r) for r in recent]))
+        return {
+            "latest":latest,
+            "availabilityPct":availability,
+            "avgLatencyMs":avg_latency,
+            "maxLatencyMs":max_latency,
+            "outageCount":outage_count,
+            "lastOutage":last_outage,
+            "onlineSince":online_since,
+            "samples":history
+        }
