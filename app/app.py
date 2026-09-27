@@ -37,6 +37,96 @@ last_monitor_cycle = None
 last_monitor_error = None
 private_rf_last_discovery = None
 private_rf_last_error = None
+private_client_cache = {"ts":0.0,"items":[]}
+
+def _norm_mac(value):
+    return str(value or "").lower().replace("-",":").strip()
+
+def _classic_clients_cached():
+    if not private_api.configured:
+        return []
+    now=time.time()
+    if private_client_cache["items"] and now-private_client_cache["ts"] < 30:
+        return private_client_cache["items"]
+    try:
+        items=private_api.clients()
+        if isinstance(items,list):
+            private_client_cache["items"]=items
+            private_client_cache["ts"]=now
+            return items
+    except Exception as e:
+        print("Classic client inventory error:",e,flush=True)
+    return private_client_cache["items"]
+
+def _enrich_client_inventory(snapshot):
+    clients=[dict(x) for x in (snapshot.get("clients") or [])]
+    networks=snapshot.get("networks") or []
+    network_map={str(n.get("id")):n for n in networks if n.get("id")}
+    network_name_map={str(n.get("name")):n for n in networks if n.get("name")}
+    device_mac_map={}
+    for d in snapshot.get("devices") or []:
+        mac=_norm_mac(d.get("macAddress") or d.get("mac"))
+        if mac:
+            device_mac_map[mac]=d
+
+    classic_map={}
+    for x in _classic_clients_cached():
+        mac=_norm_mac(x.get("mac"))
+        if mac:
+            classic_map[mac]=x
+
+    for row in clients:
+        mac=_norm_mac(row.get("macAddress"))
+        classic=classic_map.get(mac) or {}
+        access=row.get("access") or {}
+
+        network_id=(row.get("networkId")
+                    or access.get("networkId")
+                    or row.get("network_id")
+                    or classic.get("network_id"))
+        official_network=network_map.get(str(network_id)) if network_id else None
+
+        classic_network_name=(classic.get("network")
+                              or classic.get("network_name")
+                              or classic.get("usergroup_name"))
+        classic_network=network_name_map.get(str(classic_network_name)) if classic_network_name else None
+        network=official_network or classic_network or {}
+
+        vlan=(row.get("vlanId")
+              or row.get("vlan")
+              or access.get("vlanId")
+              or classic.get("vlan")
+              or network.get("vlanId"))
+        try:
+            vlan=int(vlan) if vlan not in (None,"") else None
+        except Exception:
+            pass
+
+        network_name=(network.get("name")
+                      or classic_network_name
+                      or row.get("networkName")
+                      or "Unknown")
+        ssid=(classic.get("essid")
+              or row.get("ssid")
+              or row.get("wifiName")
+              or None)
+
+        ap_mac=_norm_mac(classic.get("ap_mac"))
+        sw_mac=_norm_mac(classic.get("sw_mac"))
+        private_uplink=device_mac_map.get(ap_mac) or device_mac_map.get(sw_mac) or {}
+
+        if (not row.get("uplinkDeviceName") or row.get("uplinkDeviceName")=="Unknown") and private_uplink:
+            row["uplinkDeviceName"]=private_uplink.get("name") or row.get("uplinkDeviceName")
+            row["uplinkDeviceModel"]=private_uplink.get("model") or row.get("uplinkDeviceModel")
+
+        row["vlanId"]=vlan
+        row["networkName"]=network_name
+        row["ssid"]=ssid
+        row["switchPort"]=classic.get("sw_port")
+        row["radioName"]=classic.get("radio_name") or classic.get("radio")
+        row["channel"]=classic.get("channel")
+        row["clientSource"]="official+classic" if classic else "official"
+    return clients
 
 def report_data():
     global last_controller_success
@@ -75,7 +165,8 @@ def report_data():
 
     return {
         "ok":True,"version":VERSION,"site":snap["site"],"devices":snap["devices"],
-        "accessPoints":aps,"switches":switches,"clients":snap["clients"],
+        "accessPoints":aps,"switches":switches,"clients":_enrich_client_inventory(snap),
+        "networks":snap.get("networks") or [],
         "wifiBroadcasts":wifi,"analysis":analysis,
         "autoOptimizeEnabled":db.get_setting("auto_optimize_enabled","0")=="1",
         "lastChecked":datetime.now(timezone.utc).isoformat(),
