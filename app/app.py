@@ -75,7 +75,8 @@ def report_data():
         "channelPlan":channel_plan,
         "gateway":gateway,
         "internet":internet_data,
-        "optimizationTests":evaluate_optimization_tests(snap)
+        "optimizationTests":evaluate_optimization_tests(snap),
+        "healthHistory":db.health_history(24)
     }
 
 def _current_radio_config(snapshot, ap_id, band):
@@ -167,6 +168,12 @@ def monitor_loop():
                 for ap in data["accessPoints"]:
                     db.record_ap(ap)
                 db.record_wireless_clients(data["clients"])
+                analysis=data.get("analysis") or {}
+                db.record_health_score(
+                    analysis.get("healthScore",0),
+                    analysis.get("high",0),
+                    analysis.get("medium",0)
+                )
                 gateway=data.get("gateway") or {}
                 stats=gateway.get("statistics") or {}
                 uplink=stats.get("uplink") or {}
@@ -252,7 +259,8 @@ def optimization_tests():
             "15-min average" if baseline is not None else "unavailable"
         )
         return jsonify({"ok":True,"item":item})
-    return jsonify({"ok":True,"items":evaluate_optimization_tests()})
+    snap=build_snapshot(api)
+    return jsonify({"ok":True,"items":evaluate_optimization_tests(snap)})
 
 @app.route("/api/optimization-tests/<int:test_id>/mark-applied",methods=["POST"])
 def optimization_test_mark_applied(test_id):
