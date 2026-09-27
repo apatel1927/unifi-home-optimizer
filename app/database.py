@@ -381,3 +381,20 @@ class Database:
             """,(last_retry,status,result,test_id))
         c.commit()
         c.close()
+
+
+    def database_stats(self):
+        c=self.connect()
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests"]
+        counts={}
+        for table in tables:
+            try:
+                counts[table]=c.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+            except Exception:
+                counts[table]=None
+        c.close()
+        try:
+            size=os.path.getsize(self.path)
+        except Exception:
+            size=None
+        return {"path":self.path,"sizeBytes":size,"rowCounts":counts}
