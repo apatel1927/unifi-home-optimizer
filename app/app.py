@@ -9,11 +9,11 @@ from flask import Flask, jsonify, render_template, request
 from .database import Database
 from .unifi_api import UniFiAPI
 from .private_unifi import PrivateUniFiAPI
-from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, build_channel_plan
+from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, build_channel_plan, radio_conflict_key
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.12.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.12.1"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -113,17 +113,74 @@ def _trend_retry_for_band(trends, ap_id, band):
     value=t.get(key)
     return float(value) if value is not None else None
 
-def _preliminary_result(baseline, post):
-    if baseline is None or post is None:
+def _retry_comparison(reference, candidate):
+    if reference is None or candidate is None:
         return "INCONCLUSIVE"
-    delta=float(post)-float(baseline)
-    if delta <= -2.0 or float(post) <= float(baseline)*0.80:
+    reference=float(reference)
+    candidate=float(candidate)
+    delta=candidate-reference
+    if delta <= -2.0:
         return "IMPROVED"
-    if delta >= 2.0 or float(post) >= float(baseline)*1.20:
+    if delta >= 2.0:
         return "WORSE"
+    # Percentage comparisons become misleading near zero, so only use them
+    # when the reference retry rate is large enough to be meaningful.
+    if reference >= 5.0:
+        if candidate <= reference*0.80:
+            return "IMPROVED"
+        if candidate >= reference*1.20:
+            return "WORSE"
     return "NO_CHANGE"
 
-def _aba_final_result(t, rollback_stats):
+def _preliminary_result(baseline, post):
+    return _retry_comparison(baseline,post)
+
+def _candidate_conflict_count(snapshot, target_ap_id, band, channel, width):
+    if not snapshot:
+        return None
+    rows=[]
+    for ap in snapshot.get("devices",[]):
+        if ap.get("optimizerType")!="ACCESS_POINT":
+            continue
+        radio=next((r for r in ((ap.get("interfaces") or {}).get("radios") or []) if r.get("frequencyGHz")==band),None)
+        if not radio:
+            continue
+        ch=channel if ap.get("id")==target_ap_id else radio.get("channel")
+        w=width if ap.get("id")==target_ap_id else radio.get("channelWidthMHz")
+        key=radio_conflict_key(band,ch,w)
+        rows.append({"id":ap.get("id"),"key":key})
+
+    count=0
+    target_conflicts=0
+    for i in range(len(rows)):
+        for j in range(i+1,len(rows)):
+            if rows[i]["key"] and rows[i]["key"]==rows[j]["key"]:
+                count+=1
+                if target_ap_id in (rows[i]["id"],rows[j]["id"]):
+                    target_conflicts+=1
+    return {"networkConflicts":count,"targetConflicts":target_conflicts}
+
+def _topology_metrics_for_test(snapshot, test):
+    original=_candidate_conflict_count(
+        snapshot,test.get("ap_id"),test.get("band"),
+        test.get("original_channel"),test.get("original_width_mhz")
+    )
+    proposed=_candidate_conflict_count(
+        snapshot,test.get("ap_id"),test.get("band"),
+        test.get("proposed_channel"),test.get("proposed_width_mhz")
+    )
+    if not original or not proposed:
+        return None
+    return {
+        "originalNetworkConflicts":original["networkConflicts"],
+        "proposedNetworkConflicts":proposed["networkConflicts"],
+        "originalTargetConflicts":original["targetConflicts"],
+        "proposedTargetConflicts":proposed["targetConflicts"],
+        "targetConflictDelta":proposed["targetConflicts"]-original["targetConflicts"],
+        "networkConflictDelta":proposed["networkConflicts"]-original["networkConflicts"],
+    }
+
+def _aba_final_result(t, rollback_stats, topology=None):
     baseline=t.get("baseline_retry_60")
     if baseline is None:
         baseline=t.get("baseline_retry")
@@ -152,11 +209,23 @@ def _aba_final_result(t, rollback_stats):
         return "INCONCLUSIVE_ENVIRONMENT_CHANGED"
 
     reference=(float(baseline)+float(rollback))/2.0
-    delta=float(post)-reference
-    if delta <= -2.0 or float(post) <= reference*0.80:
+    retry_result=_retry_comparison(reference,post)
+    if retry_result=="IMPROVED":
         return "IMPROVED_CONFIRMED"
-    if delta >= 2.0 or float(post) >= reference*1.20:
+    if retry_result=="WORSE":
         return "WORSE_CONFIRMED"
+
+    # If retry performance is effectively unchanged, allow a proven topology
+    # improvement (removing our own AP overlap) to count as a confirmed win.
+    if topology:
+        original_target=topology.get("originalTargetConflicts")
+        proposed_target=topology.get("proposedTargetConflicts")
+        if original_target is not None and proposed_target is not None:
+            if proposed_target < original_target and float(post) <= reference + 2.0:
+                return "IMPROVED_TOPOLOGY"
+            if proposed_target > original_target:
+                return "WORSE_TOPOLOGY"
+
     return "NO_MEANINGFUL_CHANGE"
 
 def _private_rf_status():
@@ -359,9 +428,10 @@ def evaluate_optimization_tests(snapshot=None):
             start_window=(rollback_started+timedelta(minutes=15)).isoformat()
             end_window=(rollback_started+timedelta(minutes=75)).isoformat()
             rollback_stats=db.ap_window_stats(t.get("ap_id"),t.get("band"),start_window,end_window)
-            result=_aba_final_result(t,rollback_stats)
+            topology=_topology_metrics_for_test(snapshot,t)
+            result=_aba_final_result(t,rollback_stats,topology)
             completed=db.complete_aba_test(t["id"],result,rollback_stats)
-            if result=="IMPROVED_CONFIRMED" and snapshot and db.get_setting("auto_rf_enabled","0")=="1":
+            if result in ("IMPROVED_CONFIRMED","IMPROVED_TOPOLOGY") and snapshot and db.get_setting("auto_rf_enabled","0")=="1":
                 final_test=completed or t
                 _attempt_private_rf_write(
                     snapshot,final_test,
@@ -377,7 +447,11 @@ def evaluate_optimization_tests(snapshot=None):
             t=completed or t
 
     try:
-        return db.list_optimization_tests(100)
+        items=db.list_optimization_tests(100)
+        if snapshot:
+            for item in items:
+                item["topology"]=_topology_metrics_for_test(snapshot,item)
+        return items
     except Exception:
         return []
 
