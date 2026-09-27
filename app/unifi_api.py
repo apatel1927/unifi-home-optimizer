@@ -65,6 +65,18 @@ class UniFiAPI:
     def clients(self, site_id):
         return self.items(self.get(f"/sites/{site_id}/clients", {"limit": 200, "offset": 0}))
 
+    def networks(self, site_id):
+        basics = self.items(self.get(f"/sites/{site_id}/networks", {"limit": 200, "offset": 0}))
+        output = []
+        for item in basics:
+            network_id=item.get("id")
+            if not network_id:
+                output.append(item)
+                continue
+            r=self.get(f"/sites/{site_id}/networks/{network_id}")
+            output.append(r.get("data") if r.get("ok") and isinstance(r.get("data"), dict) else item)
+        return output
+
     def wifi_broadcasts(self, site_id):
         basics = self.items(self.get(f"/sites/{site_id}/wifi/broadcasts", {"limit": 200}))
         output = []
