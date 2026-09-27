@@ -48,6 +48,7 @@ def build_snapshot(api):
         "site": site,
         "devices": details,
         "clients": enriched,
+        "networks": api.networks(site_id),
         "wifiBroadcasts": api.wifi_broadcasts(site_id),
     }
 
