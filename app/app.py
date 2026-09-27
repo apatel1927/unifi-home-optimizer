@@ -2,6 +2,7 @@ import os
 import threading
 import time
 import requests
+import speedtest
 import traceback
 from datetime import datetime, timezone, timedelta
 from flask import Flask, jsonify, render_template, request
@@ -13,7 +14,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, buil
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.13.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.14.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -38,6 +39,12 @@ last_monitor_error = None
 private_rf_last_discovery = None
 private_rf_last_error = None
 private_client_cache = {"ts":0.0,"items":[]}
+speedtest_lock = threading.Lock()
+speedtest_running = False
+speedtest_started_at = None
+speedtest_last_error = None
+speedtest_scheduler_started = False
+speedtest_scheduler_lock = threading.Lock()
 
 def _norm_mac(value):
     return str(value or "").lower().replace("-",":").strip()
@@ -546,6 +553,120 @@ def evaluate_optimization_tests(snapshot=None):
     except Exception:
         return []
 
+def _rf_test_active():
+    try:
+        active={"PROPOSED","MONITORING","ROLLBACK_REQUIRED","ROLLBACK_MONITORING"}
+        return any(t.get("status") in active for t in db.list_optimization_tests(100))
+    except Exception:
+        return False
+
+def _speedtest_state():
+    summary=db.speedtest_summary(30)
+    interval=max(1,min(24,int(float(db.get_setting("speedtest_interval_hours","6") or 6))))
+    enabled=db.get_setting("speedtest_enabled","1")=="1"
+    latest=summary.get("latest")
+    next_due=None
+    if latest and latest.get("ts"):
+        try:
+            dt=datetime.fromisoformat(latest["ts"])
+            if dt.tzinfo is None:
+                dt=dt.replace(tzinfo=timezone.utc)
+            next_due=(dt+timedelta(hours=interval)).isoformat()
+        except Exception:
+            next_due=None
+    return {
+        "enabled":enabled,
+        "intervalHours":interval,
+        "running":speedtest_running,
+        "startedAt":speedtest_started_at,
+        "lastError":speedtest_last_error,
+        "nextDue":next_due,
+        "deferredByRfTest":_rf_test_active(),
+        **summary
+    }
+
+def run_speedtest_job(source="automatic"):
+    global speedtest_running,speedtest_started_at,speedtest_last_error
+    if not speedtest_lock.acquire(blocking=False):
+        return False
+    speedtest_running=True
+    speedtest_started_at=datetime.now(timezone.utc).isoformat()
+    speedtest_last_error=None
+    started=time.perf_counter()
+    try:
+        tester=speedtest.Speedtest(timeout=20,secure=True)
+        server=tester.get_best_server() or {}
+        tester.download()
+        tester.upload(pre_allocate=False)
+        results=tester.results.dict()
+        duration=time.perf_counter()-started
+        download=float(results.get("download") or 0)/1_000_000.0
+        upload=float(results.get("upload") or 0)/1_000_000.0
+        ping=float(results.get("ping")) if results.get("ping") is not None else None
+        srv=results.get("server") or server or {}
+        client=results.get("client") or {}
+        db.record_speedtest(
+            True,
+            download_mbps=download,
+            upload_mbps=upload,
+            ping_ms=ping,
+            server_name=srv.get("name"),
+            server_sponsor=srv.get("sponsor"),
+            server_id=srv.get("id"),
+            server_distance_km=srv.get("d"),
+            client_ip=client.get("ip"),
+            duration_sec=duration,
+        )
+        db.log(
+            "SPEEDTEST",
+            source,
+            f"{download:.1f} Mbps down / {upload:.1f} Mbps up / {ping:.1f} ms ping" if ping is not None
+            else f"{download:.1f} Mbps down / {upload:.1f} Mbps up",
+            "SUCCESS"
+        )
+        return True
+    except Exception as e:
+        duration=time.perf_counter()-started
+        speedtest_last_error=str(e)
+        db.record_speedtest(False,duration_sec=duration,error=str(e))
+        db.log("SPEEDTEST",source,str(e),"FAILED")
+        print("Speedtest error:",e,flush=True)
+        return False
+    finally:
+        speedtest_running=False
+        speedtest_started_at=None
+        speedtest_lock.release()
+
+def speedtest_scheduler_loop():
+    # Give the rest of the monitor time to settle after container startup.
+    time.sleep(60)
+    while True:
+        try:
+            if db.get_setting("speedtest_enabled","1")=="1" and not speedtest_running:
+                interval=max(1,min(24,int(float(db.get_setting("speedtest_interval_hours","6") or 6))))
+                state=db.speedtest_summary(30)
+                latest=state.get("latest")
+                due=True
+                if latest and latest.get("ts"):
+                    dt=datetime.fromisoformat(latest["ts"])
+                    if dt.tzinfo is None:
+                        dt=dt.replace(tzinfo=timezone.utc)
+                    due=(datetime.now(timezone.utc)-dt).total_seconds() >= interval*3600
+                # Avoid adding heavy WAN traffic while an RF A/B/A test is active.
+                if due and not _rf_test_active():
+                    run_speedtest_job("automatic")
+        except Exception as e:
+            print("Speedtest scheduler error:",e,flush=True)
+        time.sleep(60)
+
+def start_speedtest_scheduler():
+    global speedtest_scheduler_started
+    with speedtest_scheduler_lock:
+        if speedtest_scheduler_started:
+            return
+        speedtest_scheduler_started=True
+        threading.Thread(target=speedtest_scheduler_loop,daemon=True).start()
+
 def probe_internet():
     started=time.perf_counter()
     try:
@@ -639,6 +760,39 @@ def roaming():
 @app.route("/api/internet")
 def internet():
     return jsonify({"ok":True,**db.internet_summary(24)})
+
+@app.route("/api/speedtest")
+def speedtest_data():
+    state=_speedtest_state()
+    state["history"]=db.speedtest_history(30,500)
+    return jsonify({"ok":True,**state})
+
+@app.route("/api/speedtest/run",methods=["POST"])
+def speedtest_run():
+    if speedtest_running:
+        return jsonify({"ok":False,"error":"A speed test is already running"}),409
+    if _rf_test_active():
+        return jsonify({
+            "ok":False,
+            "error":"An RF A/B/A test is active. Automatic speed tests are deferred to avoid adding traffic during RF measurements."
+        }),409
+    threading.Thread(target=run_speedtest_job,args=("manual",),daemon=True).start()
+    return jsonify({"ok":True,"started":True})
+
+@app.route("/api/speedtest/settings",methods=["POST"])
+def speedtest_settings():
+    body=request.get_json(silent=True) or {}
+    if "enabled" in body:
+        db.set_setting("speedtest_enabled","1" if bool(body.get("enabled")) else "0")
+    if "intervalHours" in body:
+        try:
+            interval=int(body.get("intervalHours"))
+            if interval not in (1,3,6,12,24):
+                return jsonify({"ok":False,"error":"Interval must be 1, 3, 6, 12, or 24 hours"}),400
+            db.set_setting("speedtest_interval_hours",str(interval))
+        except Exception:
+            return jsonify({"ok":False,"error":"Invalid speed test interval"}),400
+    return jsonify({"ok":True,**_speedtest_state()})
 
 @app.route("/api/optimization-tests",methods=["GET","POST"])
 def optimization_tests():
