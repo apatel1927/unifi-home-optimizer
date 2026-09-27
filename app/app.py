@@ -196,6 +196,39 @@ def roaming():
 def internet():
     return jsonify({"ok":True,**db.internet_summary(24)})
 
+@app.route("/api/optimization-tests",methods=["GET","POST"])
+def optimization_tests():
+    if request.method=="POST":
+        body=request.get_json(silent=True) or {}
+        required=["apId","apName","band"]
+        if any(body.get(k) in (None,"") for k in required):
+            return jsonify({"ok":False,"error":"Missing required test fields"}),400
+        trends=db.ap_retry_trends(15)
+        baseline=_trend_retry_for_band(trends,body.get("apId"),body.get("band"))
+        item=db.create_optimization_test(
+            body.get("apId"),body.get("apName"),float(body.get("band")),
+            body.get("proposedChannel"),body.get("proposedWidthMHz"),
+            body.get("description") or "",
+            baseline,
+            "15-min average" if baseline is not None else "unavailable"
+        )
+        return jsonify({"ok":True,"item":item})
+    return jsonify({"ok":True,"items":evaluate_optimization_tests()})
+
+@app.route("/api/optimization-tests/<int:test_id>/mark-applied",methods=["POST"])
+def optimization_test_mark_applied(test_id):
+    item=db.mark_test_applied(test_id)
+    if not item:
+        return jsonify({"ok":False,"error":"Test not found"}),404
+    return jsonify({"ok":True,"item":item})
+
+@app.route("/api/optimization-tests/<int:test_id>/cancel",methods=["POST"])
+def optimization_test_cancel(test_id):
+    item=db.cancel_test(test_id)
+    if not item:
+        return jsonify({"ok":False,"error":"Test not found"}),404
+    return jsonify({"ok":True,"item":item})
+
 @app.route("/api/channel-plan")
 def channel_plan():
     snap=build_snapshot(api)
