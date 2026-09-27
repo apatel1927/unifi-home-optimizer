@@ -303,3 +303,93 @@ async function loadChannelPlan(){
   const d=await r.json();
   if(d.ok)renderChannelPlan(d);
 }
+
+
+async function startOptimizationTest(index){
+  const plan=window.channelPlanData||{};
+  const x=(plan.items||[])[index];
+  if(!x)return;
+  const body={
+    apId:x.apId,
+    apName:x.apName,
+    band:x.band,
+    proposedChannel:x.recommendedChannel,
+    proposedWidthMHz:x.recommendedWidthMHz,
+    description:(x.actions||[]).join("; ")
+  };
+  const r=await fetch("/api/optimization-tests",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body)
+  });
+  const d=await r.json();
+  if(d.ok)await loadOptimizationTests();
+}
+
+document.addEventListener("click",e=>{
+  const b=e.target.closest(".start-test-btn");
+  if(b)startOptimizationTest(Number(b.dataset.testIndex));
+});
+
+function testStatusClass(status){
+  if(status==="IMPROVED")return "ALREADY_OPTIMIZED";
+  if(status==="WORSE")return "FAILED";
+  if(status==="MONITORING")return "PROTECTED";
+  if(status==="NO_CHANGE")return "NEEDS_ATTENTION";
+  return "PROTECTED";
+}
+function fmtRetry(v){return v==null?"—":Number(v).toFixed(1)+"%"}
+
+function renderOptimizationTests(items){
+  const box=document.getElementById("optimizationTests");
+  if(!box)return;
+  if(!items.length){
+    box.innerHTML='<div class="empty">No optimization tests yet. Create one from a CONSIDER_CHANGE recommendation before changing the AP in UniFi.</div>';
+    return;
+  }
+  box.innerHTML="";
+  items.forEach(t=>{
+    const proposed=(t.proposed_channel==null?"—":t.proposed_channel)+" / "+(t.proposed_width_mhz==null?"—":t.proposed_width_mhz+" MHz");
+    let controls="";
+    if(t.status==="PROPOSED"){
+      controls='<button class="mark-applied-btn" data-id="'+t.id+'">I made this change</button> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel</button>';
+    }else if(t.status==="MONITORING"){
+      controls='<span class="muted">Monitoring for at least 60 minutes…</span>';
+    }
+    const delta=(t.baseline_retry!=null&&t.last_retry!=null)?(Number(t.last_retry)-Number(t.baseline_retry)):null;
+    const deltaText=delta==null?"—":(delta>0?"+":"")+delta.toFixed(1)+" pts";
+    box.insertAdjacentHTML("beforeend",
+      '<div class="test-card">'+
+        '<div class="channel-head"><div><h3>'+esc(t.ap_name)+'</h3><span class="muted">'+esc(t.band)+' GHz optimization test</span></div>'+
+        '<span class="status-tag '+testStatusClass(t.status)+'">'+esc(t.status)+'</span></div>'+
+        '<div class="channel-metrics">'+
+          '<div><span>Proposed</span><b>'+esc(proposed)+'</b></div>'+
+          '<div><span>Baseline retries</span><b>'+esc(fmtRetry(t.baseline_retry))+'</b><small>'+esc(t.baseline_basis||"")+'</small></div>'+
+          '<div><span>Latest retries</span><b>'+esc(fmtRetry(t.last_retry))+'</b></div>'+
+          '<div><span>Change</span><b class="'+(delta==null?"":delta<0?"good":delta>0?"warn":"")+'">'+esc(deltaText)+'</b></div>'+
+        '</div>'+
+        '<div class="test-description">'+esc(t.description||"")+'</div>'+
+        '<div class="test-controls">'+controls+'</div>'+
+      '</div>');
+  });
+}
+
+async function loadOptimizationTests(){
+  const r=await fetch("/api/optimization-tests",{cache:"no-store"});
+  const d=await r.json();
+  if(d.ok)renderOptimizationTests(d.items||[]);
+}
+
+document.addEventListener("click",async e=>{
+  const apply=e.target.closest(".mark-applied-btn");
+  if(apply){
+    await fetch("/api/optimization-tests/"+apply.dataset.id+"/mark-applied",{method:"POST"});
+    await loadOptimizationTests();
+    return;
+  }
+  const cancel=e.target.closest(".cancel-test-btn");
+  if(cancel){
+    await fetch("/api/optimization-tests/"+cancel.dataset.id+"/cancel",{method:"POST"});
+    await loadOptimizationTests();
+  }
+});
