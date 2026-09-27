@@ -106,6 +106,29 @@ class Database:
         );
         CREATE INDEX IF NOT EXISTS idx_optimization_tests_status
             ON optimization_tests(status);
+        CREATE TABLE IF NOT EXISTS radio_config_state(
+            ap_id TEXT NOT NULL,
+            band REAL NOT NULL,
+            ap_name TEXT,
+            channel INTEGER,
+            width_mhz INTEGER,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            PRIMARY KEY(ap_id,band)
+        );
+        CREATE TABLE IF NOT EXISTS radio_config_changes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            ap_id TEXT NOT NULL,
+            ap_name TEXT,
+            band REAL NOT NULL,
+            from_channel INTEGER,
+            from_width_mhz INTEGER,
+            to_channel INTEGER,
+            to_width_mhz INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_radio_config_changes_ap_band_ts
+            ON radio_config_changes(ap_id,band,ts);
         CREATE TABLE IF NOT EXISTS health_history(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -430,7 +453,7 @@ class Database:
 
     def database_stats(self):
         c=self.connect()
-        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history"]
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes"]
         counts={}
         for table in tables:
             try:
@@ -560,5 +583,71 @@ class Database:
         """,(now,result,result,rollback_stats.get("retryAvg"),rollback_stats.get("clientAvg"),rollback_stats.get("sampleCount"),test_id))
         c.commit()
         row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
+
+    def invalidate_test(self, test_id, reason="INVALID_NO_CHANGE"):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        c.execute("""
+            UPDATE optimization_tests
+            SET completed_at=?, status=?, phase='COMPLETE', result=?
+            WHERE id=? AND status IN ('PROPOSED','MONITORING','ROLLBACK_REQUIRED','ROLLBACK_MONITORING')
+        """,(now,reason,reason,test_id))
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
+    def record_radio_configs(self, device):
+        ap_id=device.get("id")
+        ap_name=device.get("name") or ap_id
+        if not ap_id:
+            return
+        now=datetime.now(timezone.utc).isoformat()
+        radios=((device.get("interfaces") or {}).get("radios") or [])
+        c=self.connect()
+        for r in radios:
+            band=r.get("frequencyGHz")
+            if band not in (2.4,5,6):
+                continue
+            channel=r.get("channel")
+            width=r.get("channelWidthMHz")
+            row=c.execute(
+                "SELECT * FROM radio_config_state WHERE ap_id=? AND band=?",
+                (ap_id,band)
+            ).fetchone()
+            if row is None:
+                c.execute("""
+                    INSERT INTO radio_config_state(ap_id,band,ap_name,channel,width_mhz,first_seen,last_seen)
+                    VALUES(?,?,?,?,?,?,?)
+                """,(ap_id,band,ap_name,channel,width,now,now))
+            else:
+                changed=(row["channel"]!=channel or row["width_mhz"]!=width)
+                if changed:
+                    c.execute("""
+                        INSERT INTO radio_config_changes(
+                            ts,ap_id,ap_name,band,from_channel,from_width_mhz,to_channel,to_width_mhz
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                    """,(now,ap_id,ap_name,band,row["channel"],row["width_mhz"],channel,width))
+                c.execute("""
+                    UPDATE radio_config_state
+                    SET ap_name=?,channel=?,width_mhz=?,last_seen=?
+                    WHERE ap_id=? AND band=?
+                """,(ap_name,channel,width,now,ap_id,band))
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c.execute("DELETE FROM radio_config_changes WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def recent_radio_change(self, ap_id, band, hours=24):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+        row=c.execute("""
+            SELECT * FROM radio_config_changes
+            WHERE ap_id=? AND band=? AND ts>=?
+            ORDER BY id DESC LIMIT 1
+        """,(ap_id,band,cutoff)).fetchone()
         c.close()
         return dict(row) if row else None
