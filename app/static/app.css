@@ -414,3 +414,46 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 .status-tag.INCONCLUSIVE_LOAD_CHANGED,
 .status-tag.INCONCLUSIVE_ENVIRONMENT_CHANGED{color:var(--warn)}
 @media(max-width:700px){.aba-strip{grid-template-columns:1fr}}
+
+
+/* v0.12.0 staged Auto RF controls */
+.private-rf-panel{padding:18px}
+.private-rf-status{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:18px;
+  padding-bottom:16px;
+  border-bottom:1px solid rgba(88,120,164,.14);
+}
+.private-rf-status h3{margin:5px 0 4px}
+.private-rf-status p{margin:0;max-width:850px;line-height:1.45}
+.private-rf-steps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}
+.rf-step{
+  display:flex;
+  gap:12px;
+  align-items:flex-start;
+  padding:15px;
+  border:1px solid rgba(91,125,171,.14);
+  border-radius:12px;
+  background:rgba(7,16,28,.58);
+}
+.rf-step-num{
+  flex:0 0 28px;
+  width:28px;height:28px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:9px;
+  background:rgba(79,140,255,.15);
+  border:1px solid rgba(79,140,255,.25);
+  color:#b9d0ff;
+  font-weight:800;
+}
+.rf-step b{display:block;margin-bottom:4px}
+.rf-step p{margin:0 0 10px;line-height:1.45}
+.rf-step code{font-size:11px;color:#c9d8ec}
+.rf-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rf-inline select{min-width:240px}
+.rf-result{margin:14px 0 0}
+@media(max-width:900px){.private-rf-steps{grid-template-columns:1fr}}
