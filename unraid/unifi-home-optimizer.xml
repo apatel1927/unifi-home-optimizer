@@ -5,7 +5,7 @@
   <Registry>https://github.com/apatel1927/unifi-home-optimizer/pkgs/container/unifi-home-optimizer</Registry>
   <Network>bridge</Network>
   <WebUI>http://[IP]:[PORT:8090]/</WebUI>
-  <Overview>Home UniFi monitoring and safe Wi-Fi optimization dashboard.</Overview>
+  <Overview>Home UniFi monitoring and safe Wi-Fi optimization dashboard.</Overview>\n  <Icon>https://raw.githubusercontent.com/apatel1927/unifi-home-optimizer/main/app/static/icon.svg</Icon>
   <Category>Network:Management</Category>
   <Config Name="WebUI" Target="8090" Default="8090" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8090</Config>
   <Config Name="AppData" Target="/config" Default="/mnt/user/appdata/unifi-optimizer" Mode="rw" Description="Persistent history and settings" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/unifi-optimizer</Config>
