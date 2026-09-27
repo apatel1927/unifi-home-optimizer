@@ -102,6 +102,9 @@ class Database:
             rollback_client_count REAL,
             rollback_sample_count INTEGER,
             preliminary_result TEXT,
+            auto_apply_attempted_at TEXT,
+            auto_rollback_attempted_at TEXT,
+            final_apply_attempted_at TEXT,
             result TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_optimization_tests_status
@@ -163,13 +166,18 @@ class Database:
             "rollback_retry_avg":"REAL",
             "rollback_client_count":"REAL",
             "rollback_sample_count":"INTEGER",
-            "preliminary_result":"TEXT"
+            "preliminary_result":"TEXT",
+            "auto_apply_attempted_at":"TEXT",
+            "auto_rollback_attempted_at":"TEXT",
+            "final_apply_attempted_at":"TEXT"
         }
         for col, ddl in test_migrations.items():
             if col not in test_cols:
                 c.execute(f"ALTER TABLE optimization_tests ADD COLUMN {col} {ddl}")
 
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_optimize_enabled','0')")
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_rf_enabled','0')")
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('private_rf_write_verified','0')")
         c.commit()
         c.close()
 
@@ -663,3 +671,25 @@ class Database:
         """,(ap_id,band,cutoff)).fetchone()
         c.close()
         return dict(row) if row else None
+
+
+    def mark_rf_attempt(self, test_id, field):
+        allowed={"auto_apply_attempted_at","auto_rollback_attempted_at","final_apply_attempted_at"}
+        if field not in allowed:
+            raise ValueError("Invalid RF attempt field")
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        c.execute(f"UPDATE optimization_tests SET {field}=? WHERE id=?",(now,test_id))
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
+    def clear_rf_attempt(self, test_id, field):
+        allowed={"auto_apply_attempted_at","auto_rollback_attempted_at","final_apply_attempted_at"}
+        if field not in allowed:
+            raise ValueError("Invalid RF attempt field")
+        c=self.connect()
+        c.execute(f"UPDATE optimization_tests SET {field}=NULL WHERE id=?",(test_id,))
+        c.commit()
+        c.close()
