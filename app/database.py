@@ -132,6 +132,23 @@ class Database:
         );
         CREATE INDEX IF NOT EXISTS idx_radio_config_changes_ap_band_ts
             ON radio_config_changes(ap_id,band,ts);
+        CREATE TABLE IF NOT EXISTS speedtest_results(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            download_mbps REAL,
+            upload_mbps REAL,
+            ping_ms REAL,
+            server_name TEXT,
+            server_sponsor TEXT,
+            server_id TEXT,
+            server_distance_km REAL,
+            client_ip TEXT,
+            duration_sec REAL,
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_speedtest_results_ts
+            ON speedtest_results(ts);
         CREATE TABLE IF NOT EXISTS health_history(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -178,6 +195,8 @@ class Database:
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_optimize_enabled','0')")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_rf_enabled','0')")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('private_rf_write_verified','0')")
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('speedtest_enabled','1')")
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('speedtest_interval_hours','6')")
         c.commit()
         c.close()
 
@@ -473,7 +492,7 @@ class Database:
 
     def database_stats(self):
         c=self.connect()
-        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes"]
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results"]
         counts={}
         for table in tables:
             try:
@@ -693,3 +712,72 @@ class Database:
         c.execute(f"UPDATE optimization_tests SET {field}=NULL WHERE id=?",(test_id,))
         c.commit()
         c.close()
+
+
+    def record_speedtest(self, success, download_mbps=None, upload_mbps=None, ping_ms=None,
+                         server_name=None, server_sponsor=None, server_id=None,
+                         server_distance_km=None, client_ip=None, duration_sec=None, error=None):
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        c.execute("""
+            INSERT INTO speedtest_results(
+                ts,success,download_mbps,upload_mbps,ping_ms,
+                server_name,server_sponsor,server_id,server_distance_km,
+                client_ip,duration_sec,error
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        """,(
+            now,1 if success else 0,download_mbps,upload_mbps,ping_ms,
+            server_name,server_sponsor,str(server_id) if server_id is not None else None,
+            server_distance_km,client_ip,duration_sec,error
+        ))
+        c.execute("DELETE FROM speedtest_results WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def speedtest_history(self, days=30, limit=500):
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=days)).isoformat()
+        c=self.connect()
+        rows=c.execute("""
+            SELECT * FROM speedtest_results
+            WHERE ts >= ?
+            ORDER BY id DESC
+            LIMIT ?
+        """,(cutoff,limit)).fetchall()
+        c.close()
+        return list(reversed([dict(r) for r in rows]))
+
+    def speedtest_summary(self, days=30):
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=days)).isoformat()
+        c=self.connect()
+        latest=c.execute("""
+            SELECT * FROM speedtest_results
+            ORDER BY id DESC LIMIT 1
+        """).fetchone()
+        latest_success=c.execute("""
+            SELECT * FROM speedtest_results
+            WHERE success=1
+            ORDER BY id DESC LIMIT 1
+        """).fetchone()
+        stats=c.execute("""
+            SELECT
+                COUNT(*) AS total_runs,
+                SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS successful_runs,
+                AVG(CASE WHEN success=1 THEN download_mbps END) AS avg_download,
+                AVG(CASE WHEN success=1 THEN upload_mbps END) AS avg_upload,
+                AVG(CASE WHEN success=1 THEN ping_ms END) AS avg_ping,
+                MIN(CASE WHEN success=1 THEN download_mbps END) AS min_download,
+                MAX(CASE WHEN success=1 THEN download_mbps END) AS max_download,
+                MIN(CASE WHEN success=1 THEN upload_mbps END) AS min_upload,
+                MAX(CASE WHEN success=1 THEN upload_mbps END) AS max_upload,
+                MIN(CASE WHEN success=1 THEN ping_ms END) AS min_ping,
+                MAX(CASE WHEN success=1 THEN ping_ms END) AS max_ping
+            FROM speedtest_results
+            WHERE ts >= ?
+        """,(cutoff,)).fetchone()
+        c.close()
+        return {
+            "latest":dict(latest) if latest else None,
+            "latestSuccess":dict(latest_success) if latest_success else None,
+            "stats":dict(stats) if stats else {}
+        }
