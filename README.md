@@ -2,8 +2,14 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.11.0
+## v0.11.1
 
+- Cancel button is available on every active RF test phase
+- Invalid A/B/A tests with identical original and proposed settings are automatically closed as INVALID_NO_CHANGE
+- Diagnostic-only retry findings now show INVESTIGATE and cannot create a fake A/B/A test
+- RF tests are only offered when channel or width will actually change
+- Radio configuration changes are recorded so already-applied changes can be recovered into A/B/A tests
+- Channel Planner includes a Recover applied change workflow with a manual fallback for changes made before config-history tracking was enabled
 - A/B/A RF verification for channel and width changes
 - Captures a 60-minute original-setting baseline before a test
 - Ignores the first 15 minutes after a change as a settling period
