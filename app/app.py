@@ -252,12 +252,14 @@ def optimization_tests():
             return jsonify({"ok":False,"error":"Missing required test fields"}),400
         trends=db.ap_retry_trends(15)
         baseline=_trend_retry_for_band(trends,body.get("apId"),body.get("band"))
+        if baseline is None and body.get("baselineRetry") is not None:
+            baseline=float(body.get("baselineRetry"))
         item=db.create_optimization_test(
             body.get("apId"),body.get("apName"),float(body.get("band")),
             body.get("proposedChannel"),body.get("proposedWidthMHz"),
             body.get("description") or "",
             baseline,
-            "15-min average" if baseline is not None else "unavailable"
+            body.get("baselineBasis") or ("15-min average" if baseline is not None else "unavailable")
         )
         return jsonify({"ok":True,"item":item})
     snap=build_snapshot(api)
