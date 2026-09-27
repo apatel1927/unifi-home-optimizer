@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import requests
 from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template, request
 
@@ -10,7 +11,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.8.5"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.9.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -25,9 +26,11 @@ def report_data():
     snap = build_snapshot(api)
     if not snap:
         return None
-    analysis = analyze(snap)
+    retry_trends = db.ap_retry_trends(15)
+    analysis = analyze(snap, retry_trends)
     aps = [d for d in snap["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     switches = [d for d in snap["devices"] if d.get("optimizerType") in ("SWITCH","GATEWAY")]
+    gateway = next((d for d in snap["devices"] if d.get("optimizerType") == "GATEWAY"), None)
     wifi = []
     for w in snap["wifiBroadcasts"]:
         row=dict(w); row["optimizerStatus"]=wifi_status(w); wifi.append(row)
@@ -39,8 +42,20 @@ def report_data():
         "lastChecked":datetime.now(timezone.utc).isoformat(),
         "pollIntervalSeconds":POLL_INTERVAL,
         "retentionDays":RETENTION_DAYS,
-        "roaming":db.roaming_summary(24)
+        "roaming":db.roaming_summary(24),
+        "retryTrends":retry_trends,
+        "gateway":gateway,
+        "internet":db.internet_summary(24)
     }
+
+def probe_internet():
+    started=time.perf_counter()
+    try:
+        r=requests.get("https://connectivitycheck.gstatic.com/generate_204",timeout=5)
+        latency_ms=(time.perf_counter()-started)*1000.0
+        return 200 <= r.status_code < 400, latency_ms
+    except Exception:
+        return False, None
 
 def monitor_loop():
     elapsed=0
@@ -51,6 +66,17 @@ def monitor_loop():
                 for ap in data["accessPoints"]:
                     db.record_ap(ap)
                 db.record_wireless_clients(data["clients"])
+                gateway=data.get("gateway") or {}
+                stats=gateway.get("statistics") or {}
+                uplink=stats.get("uplink") or {}
+                online,latency_ms=probe_internet()
+                db.record_internet_sample(
+                    online,
+                    latency_ms,
+                    uplink.get("rxRateBps"),
+                    uplink.get("txRateBps"),
+                    stats.get("uptimeSec")
+                )
             elapsed += POLL_INTERVAL
             if elapsed >= 900:
                 elapsed=0
@@ -95,6 +121,10 @@ def logs():
 @app.route("/api/roaming")
 def roaming():
     return jsonify({"ok":True,"clients":db.roaming_summary(24),"events":db.recent_roams(100)})
+
+@app.route("/api/internet")
+def internet():
+    return jsonify({"ok":True,**db.internet_summary(24)})
 
 @app.route("/health")
 def health():
