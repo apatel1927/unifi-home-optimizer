@@ -61,7 +61,7 @@ async function loadReport(){
     document.getElementById("internetSummary").textContent=internetLatest?(internetLatest.online?"ONLINE":"OFFLINE"):"LEARNING";
     document.getElementById("internetSummary").className=internetLatest?(internetLatest.online?"good":"bad"):"info";
     document.getElementById("autoToggle").checked=d.autoOptimizeEnabled;
-    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);renderChannelPlan(d.channelPlan);
+    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);renderChannelPlan(d.channelPlan);renderOptimizationTests(d.optimizationTests||[]);
   }catch(e){
     document.getElementById("controllerPill").textContent="Controller error";
     document.getElementById("controllerPill").className="pill bad";
@@ -248,6 +248,7 @@ async function loadInternet(){
 
 function renderChannelPlan(plan){
   if(!plan)return;
+  window.channelPlanData=plan;
   const items=plan.items||[];
   const conflicts=plan.conflicts||[];
   const keep=items.filter(x=>x.status==="KEEP").length;
