@@ -2,8 +2,14 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.12.1
+## v0.13.0
 
+- Client page now supports selectable filters for access point/uplink, connection type, VLAN, and network
+- Client list can be grouped by access point/uplink, VLAN, network, or connection type
+- Client sorting includes IP low-to-high/high-to-low, name, VLAN, network, access point, and connection type
+- Client inventory now shows MAC address, VLAN, network/SSID, connected-through device, switch port when available, and uplink model
+- Matching/wireless/wired/VLAN summary counts update live with filters
+- VLAN/SSID enrichment uses read-only classic client station data when private credentials are configured; unsupported/missing values safely display as Unknown
 - Topology-aware A/B/A scoring now evaluates proven own-AP conflict removal alongside retry performance
 - Adds IMPROVED_TOPOLOGY and WORSE_TOPOLOGY outcomes
 - Near-zero retry baselines no longer use misleading percentage comparisons; low retry rates use absolute-point thresholds
