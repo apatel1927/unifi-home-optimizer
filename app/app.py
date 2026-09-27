@@ -37,7 +37,12 @@ def report_data():
     except Exception as e:
         print("Retry trend error:", e, flush=True)
         retry_trends = {}
-    analysis = analyze(snap, retry_trends)
+    try:
+        ap_baselines = db.ap_client_baselines(24)
+    except Exception as e:
+        print("AP baseline error:", e, flush=True)
+        ap_baselines = {}
+    analysis = analyze(snap, retry_trends, ap_baselines)
     channel_plan = build_channel_plan(snap, retry_trends)
     aps = [d for d in snap["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     switches = [d for d in snap["devices"] if d.get("optimizerType") in ("SWITCH","GATEWAY")]
@@ -66,6 +71,7 @@ def report_data():
         "retentionDays":RETENTION_DAYS,
         "roaming":roaming_data,
         "retryTrends":retry_trends,
+        "apBaselines":ap_baselines,
         "channelPlan":channel_plan,
         "gateway":gateway,
         "internet":internet_data,
