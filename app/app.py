@@ -12,7 +12,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, buil
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.9.4"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.10.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -22,11 +22,16 @@ api = UniFiAPI(UNIFI_URL, API_KEY)
 db = Database("/config", RETENTION_DAYS)
 monitor_started = False
 monitor_lock = threading.Lock()
+last_controller_success = None
+last_monitor_cycle = None
+last_monitor_error = None
 
 def report_data():
+    global last_controller_success
     snap = build_snapshot(api)
     if not snap:
         return None
+    last_controller_success=datetime.now(timezone.utc).isoformat()
     try:
         retry_trends = db.ap_retry_trends(15)
     except Exception as e:
@@ -64,8 +69,22 @@ def report_data():
         "channelPlan":channel_plan,
         "gateway":gateway,
         "internet":internet_data,
-        "optimizationTests":evaluate_optimization_tests()
+        "optimizationTests":evaluate_optimization_tests(snap)
     }
+
+def _current_radio_config(snapshot, ap_id, band):
+    if not snapshot:
+        return None
+    for ap in snapshot.get("devices",[]):
+        if ap.get("id")!=ap_id:
+            continue
+        for radio in ((ap.get("interfaces") or {}).get("radios") or []):
+            if radio.get("frequencyGHz")==band:
+                return {
+                    "channel":radio.get("channel"),
+                    "widthMHz":radio.get("channelWidthMHz")
+                }
+    return None
 
 def _trend_retry_for_band(trends, ap_id, band):
     t=(trends or {}).get(ap_id) or {}
@@ -75,7 +94,7 @@ def _trend_retry_for_band(trends, ap_id, band):
     value=t.get(key)
     return float(value) if value is not None else None
 
-def evaluate_optimization_tests():
+def evaluate_optimization_tests(snapshot=None):
     try:
         tests=db.list_optimization_tests(100)
         trends=db.ap_retry_trends(15)
@@ -84,6 +103,16 @@ def evaluate_optimization_tests():
         return []
     now=datetime.now(timezone.utc)
     for t in tests:
+        if t.get("status")=="PROPOSED" and snapshot:
+            live=_current_radio_config(snapshot,t.get("ap_id"),t.get("band"))
+            if live:
+                channel_match=(t.get("proposed_channel") is None or live.get("channel")==t.get("proposed_channel"))
+                width_match=(t.get("proposed_width_mhz") is None or live.get("widthMHz")==t.get("proposed_width_mhz"))
+                if channel_match and width_match:
+                    updated=db.mark_test_applied(t["id"])
+                    if updated:
+                        db.log("RF_TEST_AUTO_DETECT",t.get("ap_name"),f"Detected {t.get('band')} GHz change: channel {live.get('channel')} / {live.get('widthMHz')} MHz","MONITORING")
+                        t=updated
         if t.get("status")!="MONITORING" or not t.get("applied_at"):
             continue
         current=_trend_retry_for_band(trends,t.get("ap_id"),t.get("band"))
@@ -123,6 +152,7 @@ def probe_internet():
         return False, None
 
 def monitor_loop():
+    global last_monitor_cycle,last_monitor_error
     elapsed=0
     while True:
         try:
@@ -142,12 +172,15 @@ def monitor_loop():
                     uplink.get("txRateBps"),
                     stats.get("uptimeSec")
                 )
+            last_monitor_cycle=datetime.now(timezone.utc).isoformat()
+            last_monitor_error=None
             elapsed += POLL_INTERVAL
             if elapsed >= 900:
                 elapsed=0
                 if db.get_setting("auto_optimize_enabled","0")=="1":
                     auto_optimize(api,db)
         except Exception as e:
+            last_monitor_error=str(e)
             print("Monitor error:",e,flush=True)
         time.sleep(POLL_INTERVAL)
 
@@ -239,6 +272,27 @@ def channel_plan():
     except Exception:
         retry_trends={}
     return jsonify({"ok":True,**build_channel_plan(snap,retry_trends)})
+
+@app.route("/api/system")
+def system_info():
+    stats=db.database_stats()
+    return jsonify({
+        "ok":True,
+        "version":VERSION,
+        "controller":UNIFI_URL,
+        "pollIntervalSeconds":POLL_INTERVAL,
+        "retentionDays":RETENTION_DAYS,
+        "monitorStarted":monitor_started,
+        "lastControllerSuccess":last_controller_success,
+        "lastMonitorCycle":last_monitor_cycle,
+        "lastMonitorError":last_monitor_error,
+        "database":stats,
+        "privateRf":{
+            "status":"NOT_CONFIGURED",
+            "mode":"READ_ONLY_DISCOVERY_FIRST",
+            "detail":"Private UniFi radio control is intentionally disabled until local-controller authentication and exact U7 radio payloads are verified."
+        }
+    })
 
 @app.route("/health")
 def health():
