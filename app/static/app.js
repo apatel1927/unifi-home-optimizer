@@ -10,6 +10,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="history") loadHistory();
     if(btn.dataset.page==="roaming") loadRoaming();
     if(btn.dataset.page==="internet") loadInternet();
+    if(btn.dataset.page==="speedtest") loadSpeedtest();
     if(btn.dataset.page==="channels") loadChannelPlan();
     if(btn.dataset.page==="system") loadSystem();
   });
@@ -484,6 +485,155 @@ async function loadInternet(){
   const d=await r.json();
   if(d.ok)renderInternet(d,report?.gateway);
 }
+
+
+function fmtMbps(v){
+  return v==null?"—":Number(v).toFixed(Number(v)>=1000?0:1)+" Mbps";
+}
+function fmtMs(v){
+  return v==null?"—":Number(v).toFixed(1)+" ms";
+}
+function fmtShortDate(v){
+  try{
+    if(!v)return "—";
+    return new Date(v).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+  }catch{return "—"}
+}
+function speedtestClass(download,ping){
+  if(download==null)return "";
+  if(ping!=null&&ping>=100)return "bad";
+  if(ping!=null&&ping>=50)return "warn";
+  return "good";
+}
+function renderSpeedtest(d){
+  const latest=d.latestSuccess||null;
+  const stats=d.stats||{};
+  const hist=(d.history||[]);
+
+  const dl=document.getElementById("speedtestDownload");
+  const ul=document.getElementById("speedtestUpload");
+  const pg=document.getElementById("speedtestPing");
+  const srv=document.getElementById("speedtestServer");
+  const srvDetail=document.getElementById("speedtestServerDetail");
+  const last=document.getElementById("speedtestLastRun");
+  const dur=document.getElementById("speedtestLastDuration");
+  const next=document.getElementById("speedtestNextRun");
+  const notice=document.getElementById("speedtestNotice");
+  const toggle=document.getElementById("speedtestAutoToggle");
+  const interval=document.getElementById("speedtestInterval");
+
+  if(dl)dl.textContent=latest?fmtMbps(latest.download_mbps):"—";
+  if(ul)ul.textContent=latest?fmtMbps(latest.upload_mbps):"—";
+  if(pg)pg.textContent=latest?fmtMs(latest.ping_ms):"—";
+  if(srv)srv.textContent=latest?(latest.server_sponsor||latest.server_name||"—"):"—";
+  if(srvDetail)srvDetail.textContent=latest?([latest.server_name,latest.server_distance_km!=null?Number(latest.server_distance_km).toFixed(0)+" km":null].filter(Boolean).join(" · ")||"—"):"—";
+  if(last)last.textContent=d.latest?fmtShortDate(d.latest.ts):"Never";
+  if(dur)dur.textContent=d.latest?.duration_sec!=null?"Completed in "+Number(d.latest.duration_sec).toFixed(0)+" sec":"—";
+  if(next)next.textContent=d.enabled?(d.nextDue?fmtShortDate(d.nextDue):"Due now"):"Disabled";
+  if(toggle)toggle.checked=!!d.enabled;
+  if(interval)interval.value=String(d.intervalHours||6);
+
+  if(notice){
+    if(d.running){
+      notice.innerHTML='<b class="info">Speed test running…</b><br><span class="muted">This can take about a minute. Results will appear automatically when complete.</span>';
+    }else if(d.deferredByRfTest){
+      notice.innerHTML='<b class="warn">Automatic speed test paused during active RF testing</b><br><span class="muted">It will resume after the A/B/A RF test finishes so WAN traffic does not interfere with RF measurements.</span>';
+    }else if(d.latest && !d.latest.success){
+      notice.innerHTML='<b class="warn">Last speed test failed</b><br><span class="muted">'+esc(d.latest.error||d.lastError||"Unknown speed test error")+'</span>';
+    }else if(latest){
+      notice.innerHTML='<b class="good">Automatic speed testing active</b><br><span class="muted">Every '+esc(d.intervalHours)+' hour'+(Number(d.intervalHours)===1?"":"s")+' · '+esc(stats.successful_runs||0)+' successful runs in the last 30 days.</span>';
+    }else{
+      notice.innerHTML='<b class="info">Waiting for first speed test</b><br><span class="muted">Automatic testing is '+(d.enabled?"enabled":"disabled")+'.</span>';
+    }
+  }
+
+  const success=hist.filter(x=>x.success);
+  const downloads=success.map(x=>typeof x.download_mbps==="number"?x.download_mbps:null);
+  const uploads=success.map(x=>typeof x.upload_mbps==="number"?x.upload_mbps:null);
+  const pings=success.map(x=>typeof x.ping_ms==="number"?x.ping_ms:null);
+  const maxSpeed=Math.max(10,...downloads.filter(Number.isFinite),...uploads.filter(Number.isFinite));
+  const maxPing=Math.max(20,...pings.filter(Number.isFinite));
+
+  const speedChart=document.getElementById("speedtestSpeedChart");
+  if(speedChart)speedChart.innerHTML=chartGrid()+svgLine(downloads,maxSpeed,"chart-line-rx")+svgLine(uploads,maxSpeed,"chart-line-tx");
+  const pingChart=document.getElementById("speedtestPingChart");
+  if(pingChart)pingChart.innerHTML=chartGrid()+svgLine(pings,maxPing,"chart-line-latency");
+
+  const speedSummary=document.getElementById("speedtestSpeedSummary");
+  if(speedSummary)speedSummary.textContent=success.length?"Avg "+fmtMbps(stats.avg_download)+" down · "+fmtMbps(stats.avg_upload)+" up":"No history yet";
+  const pingSummary=document.getElementById("speedtestPingSummary");
+  if(pingSummary)pingSummary.textContent=success.length?"Avg "+fmtMs(stats.avg_ping)+" · Best "+fmtMs(stats.min_ping):"No history yet";
+
+  const table=document.getElementById("speedtestHistoryTable");
+  if(table){
+    const rows=[...hist].reverse();
+    table.innerHTML=rows.length?rows.map(x=>{
+      const status=x.success?'<span class="status-tag SUCCESS">SUCCESS</span>':'<span class="status-tag FAILED">FAILED</span>';
+      const server=x.success?([x.server_sponsor,x.server_name].filter(Boolean).join(" · ")||"—"):"—";
+      return '<tr>'+
+        '<td>'+esc(fmtDateTime(x.ts))+'</td>'+
+        '<td>'+esc(x.success?fmtMbps(x.download_mbps):"—")+'</td>'+
+        '<td>'+esc(x.success?fmtMbps(x.upload_mbps):"—")+'</td>'+
+        '<td>'+esc(x.success?fmtMs(x.ping_ms):"—")+'</td>'+
+        '<td>'+esc(server)+'</td>'+
+        '<td>'+esc(x.duration_sec==null?"—":Number(x.duration_sec).toFixed(0)+" sec")+'</td>'+
+        '<td>'+status+(x.error?'<div class="muted">'+esc(x.error)+'</div>':"")+'</td>'+
+      '</tr>';
+    }).join(""):'<tr><td colspan="7"><div class="empty">No speed test history yet.</div></td></tr>';
+  }
+
+  const btn=document.getElementById("runSpeedtestBtn");
+  if(btn){
+    btn.disabled=!!d.running||!!d.deferredByRfTest;
+    btn.textContent=d.running?"Speed Test Running…":"Run Speed Test Now";
+  }
+}
+
+async function loadSpeedtest(){
+  try{
+    const r=await fetch("/api/speedtest",{cache:"no-store"});
+    const d=await r.json();
+    if(d.ok)renderSpeedtest(d);
+  }catch{}
+}
+
+async function runSpeedtestNow(){
+  const btn=document.getElementById("runSpeedtestBtn");
+  if(btn){btn.disabled=true;btn.textContent="Starting…";}
+  try{
+    const r=await fetch("/api/speedtest/run",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok){
+      const notice=document.getElementById("speedtestNotice");
+      if(notice)notice.innerHTML='<b class="warn">'+esc(d.error||"Unable to start speed test")+'</b>';
+    }
+    await loadSpeedtest();
+  }finally{
+    setTimeout(loadSpeedtest,1500);
+  }
+}
+
+document.getElementById("runSpeedtestBtn")?.addEventListener("click",runSpeedtestNow);
+document.getElementById("speedtestAutoToggle")?.addEventListener("change",async e=>{
+  await fetch("/api/speedtest/settings",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({enabled:e.target.checked})
+  });
+  await loadSpeedtest();
+});
+document.getElementById("speedtestInterval")?.addEventListener("change",async e=>{
+  await fetch("/api/speedtest/settings",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({intervalHours:Number(e.target.value)})
+  });
+  await loadSpeedtest();
+});
+
+setInterval(()=>{
+  if(document.querySelector("#speedtest.page.active"))loadSpeedtest();
+},10000);
 
 
 function renderChannelPlan(plan){
