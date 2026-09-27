@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>UniFi Home Optimizer</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>UniFi Home Optimizer</h1>
+    <p>Home network monitoring & safe optimization · v{{ version }}</p>
+  </div>
+  <div id="controllerPill" class="pill good">Controller connected</div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar">
+    <button class="nav active" data-page="overview">Overview</button>
+    <button class="nav" data-page="wifi">Wi-Fi</button>
+    <button class="nav" data-page="optimize">Auto Optimize</button>
+    <button class="nav" data-page="clients">Clients</button>
+    <button class="nav" data-page="switches">Switches</button>
+    <button class="nav" data-page="history">History</button>
+  </aside>
+
+  <main>
+    <section id="overview" class="page active">
+      <div class="cards">
+        <div class="card"><span>Network status</span><strong id="networkStatus" class="good">Checking…</strong></div>
+        <div class="card"><span>UniFi devices</span><strong id="deviceCount">—</strong></div>
+        <div class="card"><span>Clients</span><strong id="clientCount">—</strong></div>
+        <div class="card"><span>Access points</span><strong id="apCount">—</strong></div>
+        <div class="card"><span>High priority</span><strong id="highCount" class="bad">—</strong></div>
+        <div class="card"><span>Auto Optimize</span><strong id="autoSummary">—</strong></div>
+      </div>
+
+      <div class="section-head"><h2>Needs attention</h2><button class="secondary" onclick="loadReport()">Refresh</button></div>
+      <div id="recommendations"></div>
+    </section>
+
+    <section id="wifi" class="page">
+      <div class="section-head"><h2>Access points</h2><span class="muted">Live radio configuration and retry health</span></div>
+      <div id="apCards" class="ap-grid"></div>
+
+      <div class="section-head"><h2>Wi-Fi networks</h2></div>
+      <div id="wifiBroadcastCards" class="ap-grid"></div>
+    </section>
+
+    <section id="optimize" class="page">
+      <div class="panel optimize-panel">
+        <div class="toggle-row">
+          <div>
+            <h2>Auto Optimize</h2>
+            <p>Applies only documented, low-risk UniFi Wi-Fi settings.</p>
+          </div>
+          <label class="switch"><input id="autoToggle" type="checkbox"><span></span></label>
+        </div>
+        <div class="policy-list">
+          <div><b>Automatic</b><span>Enable Band Steering on eligible STANDARD Wi-Fi networks.</span></div>
+          <div><b>Automatic</b><span>Enable BSS Transition on eligible STANDARD Wi-Fi networks.</span></div>
+          <div><b>Protected</b><span>IOT_OPTIMIZED broadcasts are never modified.</span></div>
+          <div><b>Monitor only</b><span>Channel, width, transmit power and Minimum RSSI.</span></div>
+        </div>
+        <div class="actions">
+          <button id="runOptimizeBtn">Run Optimization Now</button>
+          <span id="optimizeResult" class="muted"></span>
+        </div>
+      </div>
+    </section>
+
+    <section id="clients" class="page">
+      <div class="section-head"><h2>Connected clients</h2></div>
+      <div class="panel table-wrap"><table><thead><tr><th>Name</th><th>IP</th><th>Type</th><th>Connected through</th><th>Model</th></tr></thead><tbody id="clientTable"></tbody></table></div>
+    </section>
+
+    <section id="switches" class="page">
+      <div class="section-head"><h2>Switch port health</h2></div>
+      <div id="switchContainer"></div>
+    </section>
+
+    <section id="history" class="page">
+      <div class="section-head"><h2>Optimization history</h2><button class="secondary" onclick="loadHistory()">Refresh</button></div>
+      <div class="panel table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Detail</th><th>Result</th></tr></thead><tbody id="historyTable"></tbody></table></div>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
