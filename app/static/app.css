@@ -384,3 +384,7 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
   .system-list>div{grid-template-columns:1fr;gap:5px}
   .alert-settings{align-items:flex-start;flex-direction:column}
 }
+
+.chart-line-health{stroke:#7a9cff;stroke-width:2.7}
+.compact-chart{height:160px}
+.health-trend-panel{margin-bottom:2px}
