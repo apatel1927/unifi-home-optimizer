@@ -8,7 +8,7 @@
   <Overview>Home UniFi monitoring and safe Wi-Fi optimization dashboard.</Overview>
   <Category>Network:Management</Category>
   <Config Name="WebUI" Target="8090" Default="8090" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8090</Config>
-  <Config Name="AppData" Target="/config" Default="/mnt/user/appdata/unifi-home-optimizer" Mode="rw" Description="Persistent history and settings" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/unifi-home-optimizer</Config>
+  <Config Name="AppData" Target="/config" Default="/mnt/user/appdata/unifi-optimizer" Mode="rw" Description="Persistent history and settings" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/unifi-optimizer</Config>
   <Config Name="UniFi URL" Target="UNIFI_URL" Default="https://192.168.1.1" Mode="" Description="Local UniFi Network controller URL" Type="Variable" Display="always" Required="true" Mask="false">https://192.168.1.1</Config>
   <Config Name="UniFi API Key" Target="UNIFI_API_KEY" Default="" Mode="" Description="UniFi Network API key" Type="Variable" Display="always" Required="true" Mask="true"></Config>
   <Config Name="Poll Interval" Target="POLL_INTERVAL_SECONDS" Default="60" Mode="" Description="Polling interval in seconds" Type="Variable" Display="advanced" Required="true" Mask="false">60</Config>
