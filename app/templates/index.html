@@ -240,10 +240,62 @@
         <button id="notificationBtn" class="secondary">Enable browser alerts</button>
       </div>
 
-      <div class="section-head"><h2>Experimental Auto RF</h2></div>
-      <div class="panel notice">
-        <b id="privateRfStatus">Read-only discovery not configured</b><br>
-        <span id="privateRfDetail">Private UniFi radio control stays disabled until local-controller authentication and the exact U7 radio payloads are verified. The safe optimizer continues to run independently.</span>
+      <div class="section-head">
+        <div>
+          <h2>Experimental Auto RF</h2>
+          <span class="muted">Automates channel and channel-width A/B/A testing only after the private write path is explicitly validated.</span>
+        </div>
+      </div>
+      <div class="panel private-rf-panel">
+        <div class="private-rf-status">
+          <div>
+            <span class="eyebrow">PRIVATE / CLASSIC API</span>
+            <h3 id="privateRfStatus">Checking…</h3>
+            <p id="privateRfDetail" class="muted">Checking private RF readiness.</p>
+          </div>
+          <label class="switch">
+            <input id="privateRfAutoToggle" type="checkbox">
+            <span></span>
+          </label>
+        </div>
+
+        <div class="private-rf-steps">
+          <div class="rf-step">
+            <span class="rf-step-num">1</span>
+            <div>
+              <b>Local credentials</b>
+              <p id="privateRfCreds" class="muted">Checking…</p>
+            </div>
+          </div>
+          <div class="rf-step">
+            <span class="rf-step-num">2</span>
+            <div>
+              <b>Read-only radio discovery</b>
+              <p class="muted">Reads the classic <code>radio_table</code> from your U7 access points. No settings are changed.</p>
+              <button id="privateRfDiscoverBtn" class="secondary">Run read-only discovery</button>
+            </div>
+          </div>
+          <div class="rf-step">
+            <span class="rf-step-num">3</span>
+            <div>
+              <b>Validate write path</b>
+              <p class="muted">Sends an identical radio configuration back to one selected AP. This is a no-op configuration test, but UniFi may briefly reprovision the AP.</p>
+              <div class="rf-inline">
+                <select id="privateRfApSelect" class="search"><option value="">Run discovery first</option></select>
+                <button id="privateRfVerifyBtn" class="secondary" disabled>Validate no-op write</button>
+              </div>
+            </div>
+          </div>
+          <div class="rf-step">
+            <span class="rf-step-num">4</span>
+            <div>
+              <b>Automatic A/B/A control</b>
+              <p class="muted">When enabled, the optimizer can apply the proposed channel/width, automatically roll back for verification, and re-apply the new setting only if the A/B/A result is confirmed better.</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="privateRfResult" class="notice rf-result" style="display:none"></div>
       </div>
     </section>
 
