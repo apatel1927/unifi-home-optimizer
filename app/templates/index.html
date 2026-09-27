@@ -180,10 +180,94 @@
 
     <section id="clients" class="page">
       <div class="section-head">
-        <h2>Connected clients</h2>
-        <input id="clientSearch" class="search" placeholder="Search clients…">
+        <div>
+          <h2>Connected clients</h2>
+          <span class="muted">Filter, sort, and group devices by access point, VLAN, network, connection type, and IP address.</span>
+        </div>
+        <button id="clientResetFilters" class="secondary">Reset filters</button>
       </div>
-      <div class="panel table-wrap"><table><thead><tr><th>Name</th><th>IP</th><th>Type</th><th>Connected through</th><th>Model</th></tr></thead><tbody id="clientTable"></tbody></table></div>
+
+      <div class="summary-grid client-summary-grid">
+        <div class="summary-card"><h3>Matching clients</h3><div id="clientMatchingCount" class="big">0</div></div>
+        <div class="summary-card"><h3>Wireless</h3><div id="clientWirelessCount" class="big">0</div></div>
+        <div class="summary-card"><h3>Wired</h3><div id="clientWiredCount" class="big">0</div></div>
+        <div class="summary-card"><h3>VLANs shown</h3><div id="clientVlanCount" class="big">0</div></div>
+      </div>
+
+      <div class="panel client-filter-panel">
+        <div class="client-filter-grid">
+          <label class="client-filter wide">
+            <span>Search</span>
+            <input id="clientSearch" class="search" placeholder="Name, IP, MAC, network, AP…">
+          </label>
+          <label class="client-filter">
+            <span>Access point / uplink</span>
+            <select id="clientApFilter" class="search"><option value="">All APs / uplinks</option></select>
+          </label>
+          <label class="client-filter">
+            <span>Connection</span>
+            <select id="clientTypeFilter" class="search">
+              <option value="">All types</option>
+              <option value="WIRELESS">Wireless</option>
+              <option value="WIRED">Wired</option>
+              <option value="VPN">VPN</option>
+            </select>
+          </label>
+          <label class="client-filter">
+            <span>VLAN</span>
+            <select id="clientVlanFilter" class="search"><option value="">All VLANs</option></select>
+          </label>
+          <label class="client-filter">
+            <span>Network</span>
+            <select id="clientNetworkFilter" class="search"><option value="">All networks</option></select>
+          </label>
+          <label class="client-filter">
+            <span>Group by</span>
+            <select id="clientGroupBy" class="search">
+              <option value="none">No grouping</option>
+              <option value="ap">Access point / uplink</option>
+              <option value="vlan">VLAN</option>
+              <option value="network">Network</option>
+              <option value="type">Connection type</option>
+            </select>
+          </label>
+          <label class="client-filter">
+            <span>Sort</span>
+            <select id="clientSort" class="search">
+              <option value="name-asc">Name A → Z</option>
+              <option value="name-desc">Name Z → A</option>
+              <option value="ip-asc">IP low → high</option>
+              <option value="ip-desc">IP high → low</option>
+              <option value="vlan-asc">VLAN low → high</option>
+              <option value="vlan-desc">VLAN high → low</option>
+              <option value="ap-asc">AP / uplink A → Z</option>
+              <option value="network-asc">Network A → Z</option>
+              <option value="type-asc">Connection type</option>
+            </select>
+          </label>
+        </div>
+        <div id="clientFilterSummary" class="client-filter-summary muted"></div>
+      </div>
+
+      <div id="clientGroupedContainer"></div>
+
+      <div id="clientFlatTable" class="panel table-wrap client-table-panel">
+        <table>
+          <thead>
+            <tr>
+              <th data-client-sort="name-asc">Name</th>
+              <th data-client-sort="ip-asc">IP</th>
+              <th>MAC</th>
+              <th data-client-sort="type-asc">Type</th>
+              <th data-client-sort="vlan-asc">VLAN</th>
+              <th data-client-sort="network-asc">Network / SSID</th>
+              <th data-client-sort="ap-asc">Connected through</th>
+              <th>Model</th>
+            </tr>
+          </thead>
+          <tbody id="clientTable"></tbody>
+        </table>
+      </div>
     </section>
 
     <section id="roaming" class="page">
