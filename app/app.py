@@ -12,7 +12,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, buil
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.11.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.11.1"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -160,6 +160,17 @@ def evaluate_optimization_tests(snapshot=None):
         status=t.get("status")
         phase=t.get("phase") or "PROPOSED"
 
+        if status in ("PROPOSED","MONITORING","ROLLBACK_REQUIRED","ROLLBACK_MONITORING"):
+            original_known=(t.get("original_channel") is not None or t.get("original_width_mhz") is not None)
+            proposed_known=(t.get("proposed_channel") is not None or t.get("proposed_width_mhz") is not None)
+            same_channel=(t.get("original_channel")==t.get("proposed_channel"))
+            same_width=(t.get("original_width_mhz")==t.get("proposed_width_mhz"))
+            if original_known and proposed_known and same_channel and same_width:
+                invalid=db.invalidate_test(t["id"],"INVALID_NO_CHANGE")
+                db.log("RF_TEST_INVALID",t.get("ap_name"),str(t.get("band"))+" GHz test had identical A and B settings","INVALID_NO_CHANGE")
+                t=invalid or t
+                continue
+
         if status=="PROPOSED" and snapshot:
             live=_current_radio_config(snapshot,t.get("ap_id"),t.get("band"))
             if live:
@@ -274,6 +285,7 @@ def monitor_loop():
             if data:
                 for ap in data["accessPoints"]:
                     db.record_ap(ap)
+                    db.record_radio_configs(ap)
                 db.record_wireless_clients(data["clients"])
                 analysis=data.get("analysis") or {}
                 db.record_health_score(
@@ -370,10 +382,19 @@ def optimization_tests():
         if baseline is None and body.get("baselineRetry") is not None:
             baseline=float(body.get("baselineRetry"))
         baseline60=baseline_stats.get("retryAvg")
+        proposed_channel=body.get("proposedChannel")
+        proposed_width=body.get("proposedWidthMHz")
+        live_channel=(live or {}).get("channel")
+        live_width=(live or {}).get("widthMHz")
+        if proposed_channel==live_channel and proposed_width==live_width:
+            return jsonify({
+                "ok":False,
+                "error":"No RF configuration change is proposed for this radio. Use monitoring/investigation instead of an A/B/A test."
+            }),400
         item=db.create_optimization_test(
             body.get("apId"),body.get("apName"),band,
-            body.get("proposedChannel"),body.get("proposedWidthMHz"),
-            (live or {}).get("channel"),(live or {}).get("widthMHz"),
+            proposed_channel,proposed_width,
+            live_channel,live_width,
             body.get("description") or "",
             baseline,
             body.get("baselineBasis") or ("15-min average" if baseline is not None else "unavailable"),
