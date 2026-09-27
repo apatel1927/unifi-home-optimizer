@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>UniFi-Home-Optimizer</Name>
+  <Repository>ghcr.io/apatel1927/unifi-home-optimizer:latest</Repository>
+  <Registry>https://github.com/apatel1927/unifi-home-optimizer/pkgs/container/unifi-home-optimizer</Registry>
+  <Network>bridge</Network>
+  <WebUI>http://[IP]:[PORT:8090]/</WebUI>
+  <Overview>Home UniFi monitoring and safe Wi-Fi optimization dashboard.</Overview>
+  <Category>Network:Management</Category>
+  <Config Name="WebUI" Target="8090" Default="8090" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8090</Config>
+  <Config Name="AppData" Target="/config" Default="/mnt/user/appdata/unifi-home-optimizer" Mode="rw" Description="Persistent history and settings" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/unifi-home-optimizer</Config>
+  <Config Name="UniFi URL" Target="UNIFI_URL" Default="https://192.168.1.1" Mode="" Description="Local UniFi Network controller URL" Type="Variable" Display="always" Required="true" Mask="false">https://192.168.1.1</Config>
+  <Config Name="UniFi API Key" Target="UNIFI_API_KEY" Default="" Mode="" Description="UniFi Network API key" Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Poll Interval" Target="POLL_INTERVAL_SECONDS" Default="60" Mode="" Description="Polling interval in seconds" Type="Variable" Display="advanced" Required="true" Mask="false">60</Config>
+  <Config Name="Retention Days" Target="RETENTION_DAYS" Default="30" Mode="" Description="History retention in days" Type="Variable" Display="advanced" Required="true" Mask="false">30</Config>
+</Container>
