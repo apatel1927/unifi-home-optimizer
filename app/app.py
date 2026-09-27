@@ -144,6 +144,7 @@ def evaluate_optimization_tests(snapshot=None):
             else:
                 result="NO_CHANGE"
             db.update_optimization_test_metrics(t["id"],current,status=result,result=result,completed=True)
+            db.log("RF_TEST_RESULT",t.get("ap_name"),str(t.get("band"))+" GHz baseline "+format(float(baseline),".1f")+"% -> "+format(current,".1f")+"% after 60+ minutes",result)
     try:
         return db.list_optimization_tests(100)
     except Exception:
