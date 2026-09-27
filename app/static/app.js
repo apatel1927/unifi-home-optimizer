@@ -324,6 +324,27 @@ function renderChannelPlan(plan){
     });
   }
 
+  const coordinated=document.getElementById("coordinatedRfPlan");
+  if(coordinated){
+    const byAp={};
+    items.forEach(x=>{
+      if(!byAp[x.apId])byAp[x.apId]={name:x.apName,model:x.model,bands:{}};
+      byAp[x.apId].bands[String(x.band)]=x;
+    });
+    let rows="";
+    Object.values(byAp).forEach(ap=>{
+      const fmtBand=(band)=>{
+        const x=ap.bands[String(band)];
+        if(!x)return "—";
+        const ch=x.recommendedChannel==null?x.channel:x.recommendedChannel;
+        const w=x.recommendedWidthMHz==null?x.widthMHz:x.recommendedWidthMHz;
+        return (ch==null?"—":ch)+" / "+(w==null?"—":w+" MHz");
+      };
+      rows+='<tr><td><b>'+esc(ap.name)+'</b><div class="muted">'+esc(ap.model)+'</div></td><td>'+esc(fmtBand(2.4))+'</td><td>'+esc(fmtBand(5))+'</td><td>'+esc(fmtBand(6))+'</td></tr>';
+    });
+    coordinated.innerHTML='<table><thead><tr><th>Access point</th><th>2.4 GHz target</th><th>5 GHz target</th><th>6 GHz target</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+
   const cb=document.getElementById("channelConflicts");
   if(cb){
     cb.innerHTML=conflicts.length?conflicts.map(x=>
