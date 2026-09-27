@@ -73,6 +73,25 @@ class Database:
         );
         CREATE INDEX IF NOT EXISTS idx_internet_samples_ts
             ON internet_samples(ts);
+        CREATE TABLE IF NOT EXISTS optimization_tests(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            applied_at TEXT,
+            completed_at TEXT,
+            ap_id TEXT NOT NULL,
+            ap_name TEXT NOT NULL,
+            band REAL NOT NULL,
+            proposed_channel INTEGER,
+            proposed_width_mhz INTEGER,
+            description TEXT,
+            baseline_retry REAL,
+            baseline_basis TEXT,
+            status TEXT NOT NULL DEFAULT 'PROPOSED',
+            last_retry REAL,
+            result TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_optimization_tests_status
+            ON optimization_tests(status);
         """)
         # Lightweight schema migrations for databases created by older releases.
         ap_cols = {row[1] for row in c.execute("PRAGMA table_info(ap_history)").fetchall()}
@@ -294,3 +313,71 @@ class Database:
             "onlineSince":online_since,
             "samples":history
         }
+
+
+    def create_optimization_test(self, ap_id, ap_name, band, proposed_channel, proposed_width_mhz, description, baseline_retry, baseline_basis):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        cur=c.execute("""
+            INSERT INTO optimization_tests(
+                created_at,ap_id,ap_name,band,proposed_channel,proposed_width_mhz,
+                description,baseline_retry,baseline_basis,status
+            ) VALUES(?,?,?,?,?,?,?,?,?,'PROPOSED')
+        """,(now,ap_id,ap_name,band,proposed_channel,proposed_width_mhz,description,baseline_retry,baseline_basis))
+        test_id=cur.lastrowid
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row)
+
+    def mark_test_applied(self, test_id):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        c.execute("""
+            UPDATE optimization_tests
+            SET applied_at=?, status='MONITORING'
+            WHERE id=? AND status='PROPOSED'
+        """,(now,test_id))
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
+    def cancel_test(self, test_id):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        c.execute("""
+            UPDATE optimization_tests
+            SET completed_at=?, status='CANCELLED', result='CANCELLED'
+            WHERE id=? AND status IN ('PROPOSED','MONITORING')
+        """,(now,test_id))
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
+    def list_optimization_tests(self, limit=100):
+        c=self.connect()
+        rows=c.execute("""
+            SELECT * FROM optimization_tests ORDER BY id DESC LIMIT ?
+        """,(limit,)).fetchall()
+        c.close()
+        return [dict(r) for r in rows]
+
+    def update_optimization_test_metrics(self, test_id, last_retry, status=None, result=None, completed=False):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        if completed:
+            c.execute("""
+                UPDATE optimization_tests
+                SET last_retry=?, status=?, result=?, completed_at=?
+                WHERE id=?
+            """,(last_retry,status,result,now,test_id))
+        else:
+            c.execute("""
+                UPDATE optimization_tests
+                SET last_retry=?, status=COALESCE(?,status), result=COALESCE(?,result)
+                WHERE id=?
+            """,(last_retry,status,result,test_id))
+        c.commit()
+        c.close()
