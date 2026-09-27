@@ -33,7 +33,7 @@ RETENTION_DAYS=30
 Persistent storage:
 
 ```
-/mnt/user/appdata/unifi-home-optimizer -> /config
+/mnt/user/appdata/unifi-optimizer -> /config
 ```
 
 Web UI:
