@@ -183,3 +183,164 @@ def auto_optimize(api, db):
             db.log("WIFI_AUTO_OPTIMIZE",name,", ".join(changes),failure)
             results.append({"name":name,"changed":False,"status":"FAILED","message":failure})
     return {"ok":True,"results":results}
+
+
+def _retry_for_band(ap, retry_trends, band):
+    trend = (retry_trends or {}).get(ap.get("id")) or {}
+    key = {2.4:"retry24",5:"retry5",6:"retry6"}.get(band)
+    if trend.get("sampleCount",0) >= 3 and key and trend.get(key) is not None:
+        return float(trend.get(key)), f"{trend.get('windowMinutes',15)}-min average"
+    stat_radios = (((ap.get("statistics") or {}).get("interfaces") or {}).get("radios") or [])
+    for r in stat_radios:
+        if r.get("frequencyGHz") == band and r.get("txRetriesPct") is not None:
+            return float(r.get("txRetriesPct")), "current"
+    return None, "unavailable"
+
+def _five_ghz_block(channel, width):
+    if not channel or not width:
+        return None
+    if width <= 20:
+        return f"20-{channel}"
+    blocks80 = [
+        ({36,40,44,48},"36-48"),
+        ({52,56,60,64},"52-64 DFS"),
+        ({100,104,108,112},"100-112 DFS"),
+        ({116,120,124,128},"116-128 DFS"),
+        ({132,136,140,144},"132-144 DFS"),
+        ({149,153,157,161},"149-161"),
+    ]
+    if width == 40:
+        groups=[({36,40},"36-40"),({44,48},"44-48"),({52,56},"52-56 DFS"),({60,64},"60-64 DFS"),
+                ({100,104},"100-104 DFS"),({108,112},"108-112 DFS"),({116,120},"116-120 DFS"),
+                ({124,128},"124-128 DFS"),({132,136},"132-136 DFS"),({140,144},"140-144 DFS"),
+                ({149,153},"149-153"),({157,161},"157-161")]
+        for chans,name in groups:
+            if channel in chans:return name
+    if width >= 80:
+        for chans,name in blocks80:
+            if channel in chans:return name
+    return f"{width}MHz@{channel}"
+
+def _six_ghz_block(channel, width):
+    if not channel or not width:
+        return None
+    primaries=max(1,int(width/20))
+    span=4*primaries
+    start=1+((int(channel)-1)//span)*span
+    end=start+span-4
+    return f"{start}-{end}"
+
+def build_channel_plan(snapshot, retry_trends=None):
+    retry_trends = retry_trends or {}
+    aps=[d for d in snapshot.get("devices",[]) if d.get("optimizerType")=="ACCESS_POINT"]
+    plan=[]
+    conflicts=[]
+
+    band_rows={2.4:[],5:[],6:[]}
+    for ap in aps:
+        cfg=((ap.get("interfaces") or {}).get("radios") or [])
+        for r in cfg:
+            band=r.get("frequencyGHz")
+            if band not in band_rows:
+                continue
+            retry,basis=_retry_for_band(ap,retry_trends,band)
+            row={
+                "apId":ap.get("id"),"apName":ap.get("name"),"model":ap.get("model"),
+                "band":band,"channel":r.get("channel"),"widthMHz":r.get("channelWidthMHz"),
+                "retryPct":retry,"retryBasis":basis,"clientCount":ap.get("clientCount",0)
+            }
+            if band==5:
+                row["channelBlock"]=_five_ghz_block(row["channel"],row["widthMHz"])
+            elif band==6:
+                row["channelBlock"]=_six_ghz_block(row["channel"],row["widthMHz"])
+            else:
+                row["channelBlock"]=str(row["channel"])
+            band_rows[band].append(row)
+
+    # Detect only conflicts we can prove from our own AP configuration.
+    for band,rows in band_rows.items():
+        for i in range(len(rows)):
+            for j in range(i+1,len(rows)):
+                a,b=rows[i],rows[j]
+                same=False
+                if band==2.4:
+                    same=a.get("channel")==b.get("channel")
+                else:
+                    same=a.get("channelBlock") and a.get("channelBlock")==b.get("channelBlock")
+                if same:
+                    conflicts.append({
+                        "band":band,"aps":[a["apName"],b["apName"]],
+                        "detail":f"Both APs use {band} GHz block {a.get('channelBlock')}."
+                    })
+
+    used24=set()
+    for row in band_rows[2.4]:
+        ch=row.get("channel"); width=row.get("widthMHz"); retry=row.get("retryPct")
+        rec_ch=ch if ch in (1,6,11) else next((x for x in (1,6,11) if x not in used24),1)
+        used24.add(rec_ch)
+        actions=[]
+        if width and width>20: actions.append("Change width to 20 MHz")
+        if ch not in (1,6,11): actions.append(f"Move to channel {rec_ch}")
+        if retry is not None and retry>=15: actions.append("Investigate external interference / client quality")
+        plan.append({**row,"recommendedChannel":rec_ch,"recommendedWidthMHz":20,
+                     "status":"CONSIDER_CHANGE" if actions else "KEEP",
+                     "actions":actions or ["Keep current 2.4 GHz channel plan"]})
+
+    preferred5=[
+        {"block":"36-48","channel":36,"dfs":False},
+        {"block":"100-112 DFS","channel":100,"dfs":True},
+        {"block":"149-161","channel":149,"dfs":False},
+    ]
+    assigned=set()
+    # Keep unique current blocks first.
+    block_counts={}
+    for row in band_rows[5]:
+        block_counts[row.get("channelBlock")]=block_counts.get(row.get("channelBlock"),0)+1
+    for row in band_rows[5]:
+        current=row.get("channelBlock")
+        target=None
+        if current in {x["block"] for x in preferred5} and block_counts.get(current,0)==1 and current not in assigned:
+            target=next(x for x in preferred5 if x["block"]==current)
+        if target is None:
+            target=next((x for x in preferred5 if x["block"] not in assigned),preferred5[0])
+        assigned.add(target["block"])
+        actions=[]
+        if current!=target["block"]:
+            actions.append(f"Consider {target['block']} block (primary channel {target['channel']})")
+        if row.get("retryPct") is not None and row["retryPct"]>=15:
+            actions.append("High retry trend: prioritize a cleaner block after RF survey")
+        plan.append({**row,"recommendedChannel":target["channel"],"recommendedWidthMHz":80,
+                     "recommendedBlock":target["block"],"dfs":target["dfs"],
+                     "status":"CONSIDER_CHANGE" if actions else "KEEP",
+                     "actions":actions or ["Keep current 5 GHz block"]})
+
+    used6=set()
+    for row in band_rows[6]:
+        block=row.get("channelBlock")
+        actions=[]
+        recommended_width=row.get("widthMHz")
+        if block in used6:
+            actions.append("Overlaps another AP's 6 GHz block")
+            if row.get("widthMHz",0)>160:
+                recommended_width=160
+                actions.append("Consider 160 MHz for better channel reuse")
+        used6.add(block)
+        if row.get("retryPct") is not None and row["retryPct"]>=15 and row.get("widthMHz",0)>160:
+            recommended_width=160
+            actions.append("Elevated retries: consider reducing 320 MHz to 160 MHz")
+        plan.append({**row,"recommendedChannel":row.get("channel"),"recommendedWidthMHz":recommended_width,
+                     "status":"CONSIDER_CHANGE" if actions else "KEEP",
+                     "actions":actions or ["Keep current 6 GHz channel block"]})
+
+    return {
+        "mode":"SAFE_ADVISORY",
+        "externalRfScanAvailable":False,
+        "automaticRadioWritesAvailable":False,
+        "notes":[
+            "Planner uses current AP radio configuration, AP-to-AP channel overlap, client load and retry trends.",
+            "The official UniFi Network API used by this app does not expose a documented neighboring-network RF scan or per-AP radio write endpoint.",
+            "Recommended DFS channels may be cleaner but can change if radar is detected."
+        ],
+        "conflicts":conflicts,
+        "items":plan
+    }
