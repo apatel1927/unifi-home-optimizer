@@ -12,7 +12,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, buil
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.9.2"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.9.3"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -63,8 +63,55 @@ def report_data():
         "retryTrends":retry_trends,
         "channelPlan":channel_plan,
         "gateway":gateway,
-        "internet":internet_data
+        "internet":internet_data,
+        "optimizationTests":evaluate_optimization_tests()
     }
+
+def _trend_retry_for_band(trends, ap_id, band):
+    t=(trends or {}).get(ap_id) or {}
+    key={2.4:"retry24",5.0:"retry5",5:"retry5",6.0:"retry6",6:"retry6"}.get(band)
+    if not key:
+        return None
+    value=t.get(key)
+    return float(value) if value is not None else None
+
+def evaluate_optimization_tests():
+    try:
+        tests=db.list_optimization_tests(100)
+        trends=db.ap_retry_trends(15)
+    except Exception as e:
+        print("Optimization test evaluation error:",e,flush=True)
+        return []
+    now=datetime.now(timezone.utc)
+    for t in tests:
+        if t.get("status")!="MONITORING" or not t.get("applied_at"):
+            continue
+        current=_trend_retry_for_band(trends,t.get("ap_id"),t.get("band"))
+        if current is None:
+            continue
+        applied=datetime.fromisoformat(t["applied_at"])
+        if applied.tzinfo is None:
+            applied=applied.replace(tzinfo=timezone.utc)
+        minutes=(now-applied).total_seconds()/60.0
+        baseline=t.get("baseline_retry")
+        if baseline is None:
+            db.update_optimization_test_metrics(t["id"],current)
+            continue
+        delta=current-float(baseline)
+        if minutes < 60:
+            db.update_optimization_test_metrics(t["id"],current,status="MONITORING")
+        else:
+            if delta <= -2.0 or current <= float(baseline)*0.80:
+                result="IMPROVED"
+            elif delta >= 2.0 or current >= float(baseline)*1.20:
+                result="WORSE"
+            else:
+                result="NO_CHANGE"
+            db.update_optimization_test_metrics(t["id"],current,status=result,result=result,completed=True)
+    try:
+        return db.list_optimization_tests(100)
+    except Exception:
+        return []
 
 def probe_internet():
     started=time.perf_counter()
