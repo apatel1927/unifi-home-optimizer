@@ -39,6 +39,29 @@ class Database:
             retry_5 REAL,
             retry_6 REAL
         );
+        CREATE TABLE IF NOT EXISTS client_state(
+            client_id TEXT PRIMARY KEY,
+            mac_address TEXT,
+            name TEXT,
+            ap_id TEXT,
+            ap_name TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            last_change TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS roam_events(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            mac_address TEXT,
+            name TEXT,
+            from_ap_id TEXT,
+            from_ap_name TEXT,
+            to_ap_id TEXT,
+            to_ap_name TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_roam_events_client_ts
+            ON roam_events(client_id, ts);
         """)
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_optimize_enabled','0')")
         c.commit()
