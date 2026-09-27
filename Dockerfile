@@ -4,6 +4,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY VERSION /app/VERSION
+RUN python -m py_compile app/*.py
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8090
 CMD ["gunicorn","--bind","0.0.0.0:8090","--workers","1","--timeout","120","app.app:app"]
