@@ -6,7 +6,8 @@ document.querySelectorAll(".nav").forEach(btn=>{
     document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById(btn.dataset.page).classList.add("active");
-    if(btn.dataset.page==="history") loadHistory();\n    if(btn.dataset.page==="roaming") loadRoaming();
+    if(btn.dataset.page==="history") loadHistory();
+    if(btn.dataset.page==="roaming") loadRoaming();
   });
 });
 
