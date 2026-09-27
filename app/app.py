@@ -8,23 +8,35 @@ from flask import Flask, jsonify, render_template, request
 
 from .database import Database
 from .unifi_api import UniFiAPI
+from .private_unifi import PrivateUniFiAPI
 from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, build_channel_plan
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.11.1"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.12.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "30"))
+UNIFI_PRIVATE_USERNAME = os.getenv("UNIFI_PRIVATE_USERNAME", "")
+UNIFI_PRIVATE_PASSWORD = os.getenv("UNIFI_PRIVATE_PASSWORD", "")
+UNIFI_SITE_NAME = os.getenv("UNIFI_SITE_NAME", "default")
 
 api = UniFiAPI(UNIFI_URL, API_KEY)
+private_api = PrivateUniFiAPI(
+    UNIFI_URL,
+    UNIFI_PRIVATE_USERNAME,
+    UNIFI_PRIVATE_PASSWORD,
+    UNIFI_SITE_NAME,
+)
 db = Database("/config", RETENTION_DAYS)
 monitor_started = False
 monitor_lock = threading.Lock()
 last_controller_success = None
 last_monitor_cycle = None
 last_monitor_error = None
+private_rf_last_discovery = None
+private_rf_last_error = None
 
 def report_data():
     global last_controller_success
@@ -147,6 +159,87 @@ def _aba_final_result(t, rollback_stats):
         return "WORSE_CONFIRMED"
     return "NO_MEANINGFUL_CHANGE"
 
+def _private_rf_status():
+    configured=private_api.configured
+    verified=db.get_setting("private_rf_write_verified","0")=="1"
+    auto_enabled=db.get_setting("auto_rf_enabled","0")=="1"
+    if not configured:
+        status="CREDENTIALS_MISSING"
+        detail="Add UNIFI_PRIVATE_USERNAME and UNIFI_PRIVATE_PASSWORD to the Unraid container to enable classic API discovery."
+    elif not verified:
+        status="DISCOVERY_READY"
+        detail="Private API credentials are configured. Run read-only discovery, then explicitly validate a no-op radio write before Auto RF can be enabled."
+    else:
+        status="WRITE_VERIFIED"
+        detail="Private RF write path has been validated. Auto RF can make one channel/width change at a time through the A/B/A workflow."
+    return {
+        "status":status,
+        "detail":detail,
+        "configured":configured,
+        "writeVerified":verified,
+        "autoEnabled":auto_enabled,
+        "lastDiscovery":private_rf_last_discovery,
+        "lastError":private_rf_last_error,
+        "site":UNIFI_SITE_NAME,
+    }
+
+def _private_device_for_test(snapshot, test):
+    if not snapshot:
+        return None
+    ap=next((d for d in snapshot.get("devices",[]) if d.get("id")==test.get("ap_id")),None)
+    if not ap:
+        return None
+    mac=ap.get("macAddress") or ap.get("mac")
+    ip=ap.get("ipAddress") or ap.get("ip")
+    return private_api.find_device(mac=mac,name=ap.get("name"),ip=ip)
+
+def _attempt_private_rf_write(snapshot, test, channel, width, attempt_field, action_name):
+    if db.get_setting("auto_rf_enabled","0")!="1":
+        return None
+    if db.get_setting("private_rf_write_verified","0")!="1":
+        return None
+    attempted=test.get(attempt_field)
+    if attempted:
+        try:
+            at=datetime.fromisoformat(attempted)
+            if at.tzinfo is None:
+                at=at.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc)-at).total_seconds() < 600:
+                return None
+        except Exception:
+            pass
+
+    db.mark_rf_attempt(test["id"],attempt_field)
+    device=_private_device_for_test(snapshot,test)
+    if not device:
+        db.log(action_name,test.get("ap_name"),"Classic API device mapping failed","FAILED")
+        db.set_setting("auto_rf_enabled","0")
+        return {"ok":False,"error":"Classic device mapping failed"}
+
+    result=private_api.write_radio(
+        device=device,
+        band=test.get("band"),
+        channel=channel,
+        width=width,
+    )
+    if result.get("ok"):
+        db.log(
+            action_name,
+            test.get("ap_name"),
+            str(test.get("band"))+" GHz -> channel "+str(channel)+" / "+str(width)+" MHz",
+            "ACCEPTED"
+        )
+    else:
+        db.log(
+            action_name,
+            test.get("ap_name"),
+            "Private API write failed: "+str(result.get("status"))+" "+str(result.get("error") or result.get("data")),
+            "FAILED"
+        )
+        # Fail closed. The user can inspect the error and re-enable only after fixing it.
+        db.set_setting("auto_rf_enabled","0")
+    return result
+
 def evaluate_optimization_tests(snapshot=None):
     try:
         tests=db.list_optimization_tests(100)
@@ -170,6 +263,13 @@ def evaluate_optimization_tests(snapshot=None):
                 db.log("RF_TEST_INVALID",t.get("ap_name"),str(t.get("band"))+" GHz test had identical A and B settings","INVALID_NO_CHANGE")
                 t=invalid or t
                 continue
+
+        if status=="PROPOSED" and snapshot and db.get_setting("auto_rf_enabled","0")=="1":
+            _attempt_private_rf_write(
+                snapshot,t,
+                t.get("proposed_channel"),t.get("proposed_width_mhz"),
+                "auto_apply_attempted_at","RF_AUTO_APPLY_TEST"
+            )
 
         if status=="PROPOSED" and snapshot:
             live=_current_radio_config(snapshot,t.get("ap_id"),t.get("band"))
@@ -219,6 +319,13 @@ def evaluate_optimization_tests(snapshot=None):
             t=updated or t
             status=t.get("status")
 
+        if status=="ROLLBACK_REQUIRED" and snapshot and db.get_setting("auto_rf_enabled","0")=="1":
+            _attempt_private_rf_write(
+                snapshot,t,
+                t.get("original_channel"),t.get("original_width_mhz"),
+                "auto_rollback_attempted_at","RF_AUTO_ROLLBACK_TEST"
+            )
+
         if status=="ROLLBACK_REQUIRED" and snapshot:
             original_channel=t.get("original_channel")
             original_width=t.get("original_width_mhz")
@@ -254,6 +361,13 @@ def evaluate_optimization_tests(snapshot=None):
             rollback_stats=db.ap_window_stats(t.get("ap_id"),t.get("band"),start_window,end_window)
             result=_aba_final_result(t,rollback_stats)
             completed=db.complete_aba_test(t["id"],result,rollback_stats)
+            if result=="IMPROVED_CONFIRMED" and snapshot and db.get_setting("auto_rf_enabled","0")=="1":
+                final_test=completed or t
+                _attempt_private_rf_write(
+                    snapshot,final_test,
+                    final_test.get("proposed_channel"),final_test.get("proposed_width_mhz"),
+                    "final_apply_attempted_at","RF_AUTO_FINAL_APPLY"
+                )
             db.log(
                 "RF_TEST_ABA_RESULT",
                 t.get("ap_name"),
@@ -519,12 +633,60 @@ def system_info():
         "lastMonitorCycle":last_monitor_cycle,
         "lastMonitorError":last_monitor_error,
         "database":stats,
-        "privateRf":{
-            "status":"NOT_CONFIGURED",
-            "mode":"READ_ONLY_DISCOVERY_FIRST",
-            "detail":"Private UniFi radio control is intentionally disabled until local-controller authentication and exact U7 radio payloads are verified."
-        }
+        "privateRf":_private_rf_status()
     })
+
+@app.route("/api/private-rf/discover",methods=["POST"])
+def private_rf_discover():
+    global private_rf_last_discovery,private_rf_last_error
+    if not private_api.configured:
+        return jsonify({"ok":False,"error":"Private API credentials are not configured"}),400
+    result=private_api.discover_radios()
+    if result.get("ok"):
+        private_rf_last_discovery=datetime.now(timezone.utc).isoformat()
+        private_rf_last_error=None
+        db.log("PRIVATE_RF_DISCOVERY","UniFi classic API",str(len(result.get("accessPoints") or []))+" APs with radio_table","SUCCESS")
+        return jsonify({**result,"status":_private_rf_status()})
+    private_rf_last_error=result.get("error") or str(result)
+    db.log("PRIVATE_RF_DISCOVERY","UniFi classic API",private_rf_last_error,"FAILED")
+    return jsonify(result),400
+
+@app.route("/api/private-rf/verify-write",methods=["POST"])
+def private_rf_verify_write():
+    global private_rf_last_error
+    body=request.get_json(silent=True) or {}
+    classic_id=body.get("classicId")
+    if not classic_id:
+        return jsonify({"ok":False,"error":"Select an AP to validate"}),400
+    devices=private_api.devices()
+    device=next((d for d in devices if d.get("_id")==classic_id),None)
+    if not device:
+        return jsonify({"ok":False,"error":"Selected classic API device was not found"}),404
+
+    result=private_api.verify_noop_write(device)
+    if result.get("ok"):
+        db.set_setting("private_rf_write_verified","1")
+        private_rf_last_error=None
+        db.log("PRIVATE_RF_WRITE_VERIFY",device.get("name") or device.get("mac"),"Identical radio_table PUT accepted by controller","SUCCESS")
+        return jsonify({"ok":True,"status":_private_rf_status()})
+
+    db.set_setting("private_rf_write_verified","0")
+    db.set_setting("auto_rf_enabled","0")
+    private_rf_last_error=str(result.get("error") or result.get("data") or result)
+    db.log("PRIVATE_RF_WRITE_VERIFY",device.get("name") or device.get("mac"),private_rf_last_error,"FAILED")
+    return jsonify({"ok":False,"error":private_rf_last_error,"status":_private_rf_status()}),400
+
+@app.route("/api/private-rf/auto",methods=["POST"])
+def private_rf_auto_toggle():
+    enabled=bool((request.get_json(silent=True) or {}).get("enabled"))
+    if enabled:
+        if not private_api.configured:
+            return jsonify({"ok":False,"error":"Private API credentials are missing"}),400
+        if db.get_setting("private_rf_write_verified","0")!="1":
+            return jsonify({"ok":False,"error":"Validate the private RF write path first"}),400
+    db.set_setting("auto_rf_enabled","1" if enabled else "0")
+    db.log("PRIVATE_RF_AUTO","Experimental Auto RF","Enabled" if enabled else "Disabled","SUCCESS")
+    return jsonify({"ok":True,"enabled":enabled,"status":_private_rf_status()})
 
 @app.route("/health")
 def health():
