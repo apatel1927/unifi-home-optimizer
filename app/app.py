@@ -10,7 +10,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.8.1"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.8.2"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -38,7 +38,8 @@ def report_data():
         "autoOptimizeEnabled":db.get_setting("auto_optimize_enabled","0")=="1",
         "lastChecked":datetime.now(timezone.utc).isoformat(),
         "pollIntervalSeconds":POLL_INTERVAL,
-        "retentionDays":RETENTION_DAYS
+        "retentionDays":RETENTION_DAYS,
+        "roaming":db.roaming_summary(24)
     }
 
 def monitor_loop():
@@ -49,6 +50,7 @@ def monitor_loop():
             if data:
                 for ap in data["accessPoints"]:
                     db.record_ap(ap)
+                db.record_wireless_clients(data["clients"])
             elapsed += POLL_INTERVAL
             if elapsed >= 900:
                 elapsed=0
@@ -89,6 +91,10 @@ def run_optimize():
 @app.route("/api/optimization-log")
 def logs():
     return jsonify({"ok":True,"items":db.recent_logs(100)})
+
+@app.route("/api/roaming")
+def roaming():
+    return jsonify({"ok":True,"clients":db.roaming_summary(24),"events":db.recent_roams(100)})
 
 @app.route("/health")
 def health():
