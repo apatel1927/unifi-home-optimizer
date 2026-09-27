@@ -155,13 +155,215 @@ function renderBroadcasts(){
   });
 }
 
-function renderClients(){
-  const q=(document.getElementById("clientSearch")?.value||"").toLowerCase();
-  const t=document.getElementById("clientTable");t.innerHTML="";
-  report.clients.filter(c=>[c.name,c.ipAddress,c.type,c.uplinkDeviceName,c.uplinkDeviceModel].some(v=>String(v||"").toLowerCase().includes(q)))
-  .forEach(c=>t.insertAdjacentHTML("beforeend",`<tr><td>${esc(c.name)}</td><td>${esc(c.ipAddress)}</td><td>${esc(c.type)}</td><td>${esc(c.uplinkDeviceName)}</td><td>${esc(c.uplinkDeviceModel)}</td></tr>`));
+function clientIpParts(ip){
+  const s=String(ip||"");
+  if(/^\d{1,3}(\.\d{1,3}){3}$/.test(s)){
+    const p=s.split(".").map(Number);
+    return [0,...p];
+  }
+  return [1,s.toLowerCase()];
 }
-document.getElementById("clientSearch").addEventListener("input",()=>report&&renderClients());
+
+function compareClientValues(a,b,sort){
+  const dir=sort.endsWith("-desc")?-1:1;
+  const field=sort.replace(/-(asc|desc)$/,"");
+  let av,bv;
+  if(field==="ip"){
+    av=clientIpParts(a.ipAddress);bv=clientIpParts(b.ipAddress);
+    for(let i=0;i<Math.max(av.length,bv.length);i++){
+      const x=av[i]??"";const y=bv[i]??"";
+      if(x===y)continue;
+      return (x<y?-1:1)*dir;
+    }
+    return 0;
+  }
+  if(field==="vlan"){
+    av=a.vlanId==null?99999:Number(a.vlanId);
+    bv=b.vlanId==null?99999:Number(b.vlanId);
+    return (av-bv)*dir;
+  }
+  if(field==="ap"){av=a.uplinkDeviceName||"";bv=b.uplinkDeviceName||""}
+  else if(field==="network"){av=a.networkName||"";bv=b.networkName||""}
+  else if(field==="type"){av=a.type||"";bv=b.type||""}
+  else {av=a.name||a.macAddress||"";bv=b.name||b.macAddress||""}
+  return String(av).localeCompare(String(bv),undefined,{numeric:true,sensitivity:"base"})*dir;
+}
+
+function setClientSelectOptions(id,values,allLabel){
+  const el=document.getElementById(id);
+  if(!el)return;
+  const current=el.value;
+  const unique=[...new Set(values.filter(v=>v!==null&&v!==undefined&&String(v)!=="").map(v=>String(v)))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+  el.innerHTML='<option value="">'+esc(allLabel)+'</option>'+unique.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join("");
+  if(unique.includes(current))el.value=current;
+}
+
+function updateClientFilterOptions(){
+  if(!report)return;
+  const clients=report.clients||[];
+  setClientSelectOptions("clientApFilter",clients.map(c=>c.uplinkDeviceName),"All APs / uplinks");
+  setClientSelectOptions("clientVlanFilter",clients.map(c=>c.vlanId==null?"Unknown":c.vlanId),"All VLANs");
+  const networks=[
+    ...clients.map(c=>c.networkName),
+    ...(report.networks||[]).map(n=>n.name)
+  ];
+  setClientSelectOptions("clientNetworkFilter",networks,"All networks");
+
+  const typeEl=document.getElementById("clientTypeFilter");
+  if(typeEl){
+    const current=typeEl.value;
+    const types=[...new Set(clients.map(c=>c.type).filter(Boolean))].sort();
+    typeEl.innerHTML='<option value="">All types</option>'+types.map(v=>'<option value="'+esc(v)+'">'+esc(v.charAt(0)+v.slice(1).toLowerCase())+'</option>').join("");
+    if(types.includes(current))typeEl.value=current;
+  }
+}
+
+function clientRowHtml(c){
+  const network=c.networkName&&c.networkName!=="Unknown"?c.networkName:"Unknown";
+  const ssid=c.ssid&&c.ssid!==network?'<div class="muted">'+esc(c.ssid)+'</div>':"";
+  const vlan=c.vlanId==null?"Unknown":c.vlanId;
+  const name=c.name||c.macAddress||"Unnamed client";
+  const uplink=c.uplinkDeviceName||"Unknown";
+  const port=c.switchPort!=null?'<div class="muted">Port '+esc(c.switchPort)+'</div>':"";
+  return '<tr>'+
+    '<td><b>'+esc(name)+'</b></td>'+
+    '<td class="client-ip">'+esc(c.ipAddress)+'</td>'+
+    '<td class="client-mac">'+esc(c.macAddress)+'</td>'+
+    '<td><span class="status-tag '+(c.type==="WIRELESS"?"PROTECTED":c.type==="WIRED"?"ALREADY_OPTIMIZED":"")+'">'+esc(c.type)+'</span></td>'+
+    '<td><span class="vlan-pill">VLAN '+esc(vlan)+'</span></td>'+
+    '<td>'+esc(network)+ssid+'</td>'+
+    '<td>'+esc(uplink)+port+'</td>'+
+    '<td>'+esc(c.uplinkDeviceModel)+'</td>'+
+  '</tr>';
+}
+
+function clientGroupValue(c,groupBy){
+  if(groupBy==="ap")return c.uplinkDeviceName||"Unknown AP / uplink";
+  if(groupBy==="vlan")return c.vlanId==null?"VLAN Unknown":"VLAN "+c.vlanId;
+  if(groupBy==="network")return c.networkName||"Unknown network";
+  if(groupBy==="type")return c.type||"Unknown type";
+  return "";
+}
+
+function filteredClients(){
+  if(!report)return [];
+  const q=(document.getElementById("clientSearch")?.value||"").trim().toLowerCase();
+  const ap=document.getElementById("clientApFilter")?.value||"";
+  const type=document.getElementById("clientTypeFilter")?.value||"";
+  const vlan=document.getElementById("clientVlanFilter")?.value||"";
+  const network=document.getElementById("clientNetworkFilter")?.value||"";
+  const sort=document.getElementById("clientSort")?.value||"name-asc";
+
+  return (report.clients||[]).filter(c=>{
+    const searchFields=[
+      c.name,c.ipAddress,c.macAddress,c.type,c.uplinkDeviceName,c.uplinkDeviceModel,
+      c.networkName,c.ssid,c.vlanId,c.switchPort
+    ];
+    if(q && !searchFields.some(v=>String(v??"").toLowerCase().includes(q)))return false;
+    if(ap && String(c.uplinkDeviceName||"")!==ap)return false;
+    if(type && String(c.type||"")!==type)return false;
+    const clientVlan=c.vlanId==null?"Unknown":String(c.vlanId);
+    if(vlan && clientVlan!==vlan)return false;
+    if(network && String(c.networkName||"")!==network)return false;
+    return true;
+  }).sort((a,b)=>compareClientValues(a,b,sort));
+}
+
+function renderClients(){
+  if(!report)return;
+  updateClientFilterOptions();
+  const rows=filteredClients();
+  const groupBy=document.getElementById("clientGroupBy")?.value||"none";
+  const t=document.getElementById("clientTable");
+  const flat=document.getElementById("clientFlatTable");
+  const grouped=document.getElementById("clientGroupedContainer");
+
+  const wireless=rows.filter(c=>c.type==="WIRELESS").length;
+  const wired=rows.filter(c=>c.type==="WIRED").length;
+  const vlans=new Set(rows.map(c=>c.vlanId==null?"Unknown":String(c.vlanId)));
+
+  document.getElementById("clientMatchingCount").textContent=rows.length;
+  document.getElementById("clientWirelessCount").textContent=wireless;
+  document.getElementById("clientWiredCount").textContent=wired;
+  document.getElementById("clientVlanCount").textContent=vlans.size;
+
+  const total=(report.clients||[]).length;
+  const summary=document.getElementById("clientFilterSummary");
+  if(summary){
+    const active=[];
+    const ap=document.getElementById("clientApFilter")?.value;
+    const type=document.getElementById("clientTypeFilter")?.value;
+    const vlan=document.getElementById("clientVlanFilter")?.value;
+    const network=document.getElementById("clientNetworkFilter")?.value;
+    if(ap)active.push("uplink: "+ap);
+    if(type)active.push("type: "+type);
+    if(vlan)active.push("VLAN: "+vlan);
+    if(network)active.push("network: "+network);
+    summary.textContent=rows.length+" of "+total+" clients"+(active.length?" · "+active.join(" · "):"");
+  }
+
+  if(groupBy==="none"){
+    if(flat)flat.style.display="";
+    if(grouped)grouped.innerHTML="";
+    if(t){
+      t.innerHTML=rows.length?rows.map(clientRowHtml).join(""):'<tr><td colspan="8"><div class="empty">No clients match the selected filters.</div></td></tr>';
+    }
+    return;
+  }
+
+  if(flat)flat.style.display="none";
+  const groups=new Map();
+  rows.forEach(c=>{
+    const key=clientGroupValue(c,groupBy);
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(c);
+  });
+
+  if(grouped){
+    if(!groups.size){
+      grouped.innerHTML='<div class="empty">No clients match the selected filters.</div>';
+      return;
+    }
+    grouped.innerHTML=[...groups.entries()].sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true,sensitivity:"base"})).map(([name,items])=>
+      '<div class="client-group">'+
+        '<div class="client-group-head"><div><h3>'+esc(name)+'</h3><span class="muted">'+items.length+' client'+(items.length===1?"":"s")+'</span></div></div>'+
+        '<div class="panel table-wrap"><table><thead><tr><th>Name</th><th>IP</th><th>MAC</th><th>Type</th><th>VLAN</th><th>Network / SSID</th><th>Connected through</th><th>Model</th></tr></thead><tbody>'+
+        items.map(clientRowHtml).join("")+
+        '</tbody></table></div>'+
+      '</div>'
+    ).join("");
+  }
+}
+
+["clientSearch","clientApFilter","clientTypeFilter","clientVlanFilter","clientNetworkFilter","clientGroupBy","clientSort"].forEach(id=>{
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.addEventListener(id==="clientSearch"?"input":"change",()=>report&&renderClients());
+});
+
+document.getElementById("clientResetFilters")?.addEventListener("click",()=>{
+  ["clientSearch","clientApFilter","clientTypeFilter","clientVlanFilter","clientNetworkFilter"].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value="";
+  });
+  const group=document.getElementById("clientGroupBy");if(group)group.value="none";
+  const sort=document.getElementById("clientSort");if(sort)sort.value="name-asc";
+  if(report)renderClients();
+});
+
+document.querySelectorAll("[data-client-sort]").forEach(th=>{
+  th.addEventListener("click",()=>{
+    const sort=document.getElementById("clientSort");
+    if(!sort)return;
+    const requested=th.dataset.clientSort;
+    const base=requested.replace(/-(asc|desc)$/,"");
+    const current=sort.value;
+    sort.value=current===base+"-asc"?base+"-desc":base+"-asc";
+    if(![...sort.options].some(o=>o.value===sort.value)){
+      sort.value=requested;
+    }
+    if(report)renderClients();
+  });
+});
 
 function renderSwitches(){
   const box=document.getElementById("switchContainer");box.innerHTML="";
