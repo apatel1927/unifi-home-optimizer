@@ -85,8 +85,8 @@ def analyze(snapshot):
         if d.get("optimizerType") in ("SWITCH","GATEWAY"):
             for p in ((d.get("interfaces") or {}).get("ports") or []):
                 if p.get("state") == "UP" and p.get("maxSpeedMbps",0) >= 10000 and p.get("speedMbps",0) <= 100:
-                    recs.append({"severity":"MEDIUM","category":"WIRED","device":d.get("name"),
-                                 "message":f"Port {p.get('idx')} is at {p.get('speedMbps')} Mbps on a 10G-capable port."})
+                    recs.append({"severity":"INFO","category":"WIRED_OBSERVATION","device":d.get("name"),
+                                 "message":f"Port {p.get('idx')} negotiated at {p.get('speedMbps')} Mbps. This may be normal for a 100 Mbps endpoint; verify only if unexpected."})
 
     for w in snapshot["wifiBroadcasts"]:
         if w.get("type") != "STANDARD":
@@ -100,11 +100,18 @@ def analyze(snapshot):
 
     order={"HIGH":0,"MEDIUM":1,"INFO":2}
     recs.sort(key=lambda x: order.get(x["severity"],99))
+    high = sum(1 for x in recs if x["severity"]=="HIGH")
+    medium = sum(1 for x in recs if x["severity"]=="MEDIUM")
+    info = sum(1 for x in recs if x["severity"]=="INFO")
+    health_score = max(0, 100 - high*20 - medium*6)
     return {
         "recommendations": recs,
-        "high": sum(1 for x in recs if x["severity"]=="HIGH"),
-        "medium": sum(1 for x in recs if x["severity"]=="MEDIUM"),
-        "info": sum(1 for x in recs if x["severity"]=="INFO"),
+        "high": high,
+        "medium": medium,
+        "info": info,
+        "healthScore": health_score,
+        "wifiFindings": [x for x in recs if x["category"] in ("WIFI","RETRIES","AUTO_SUPPORTED","AP_BALANCE")],
+        "wiredFindings": [x for x in recs if x["category"] in ("WIRED","WIRED_OBSERVATION","DEVICE")],
     }
 
 def wifi_status(wifi):
