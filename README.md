@@ -2,12 +2,17 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.12.0
+## v0.12.1
 
+- Topology-aware A/B/A scoring now evaluates proven own-AP conflict removal alongside retry performance
+- Adds IMPROVED_TOPOLOGY and WORSE_TOPOLOGY outcomes
+- Near-zero retry baselines no longer use misleading percentage comparisons; low retry rates use absolute-point thresholds
+- Auto RF can keep/re-apply a proposed channel when it removes an own-AP conflict without materially worsening retries
+- RF test cards show own-AP conflict count for A -> B
 - Experimental Auto RF can automate A/B/A channel and width changes after an explicit write-path validation
 - Adds a separate cookie/CSRF classic UniFi API client for the per-AP radio controls missing from the supported Integration API
 - Staged safety flow: credentials -> read-only radio_table discovery -> explicit no-op write validation -> Auto RF enable
-- Auto RF applies the B setting, rolls back to A for verification, and re-applies B only when the A/B/A result is IMPROVED_CONFIRMED
+- Auto RF applies the B setting, rolls back to A for verification, and re-applies B when the result is IMPROVED_CONFIRMED or IMPROVED_TOPOLOGY
 - Any private API write failure disables Auto RF automatically
 - Private API credentials stay in Unraid environment variables and are never stored in the SQLite database
 - New optional Unraid variables: UNIFI_PRIVATE_USERNAME, UNIFI_PRIVATE_PASSWORD, and UNIFI_SITE_NAME
