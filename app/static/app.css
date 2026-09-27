@@ -533,3 +533,38 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
   .client-filter-grid{grid-template-columns:1fr}
   .client-filter.wide{grid-column:auto}
 }
+
+
+/* v0.14.0 automatic speed testing */
+.speedtest-controls{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto minmax(180px,220px);
+  gap:18px;
+  align-items:center;
+  padding:18px;
+  margin-bottom:14px;
+}
+.speedtest-control-copy h3{margin:0 0 4px;font-size:15px}
+.speedtest-control-copy p{margin:0;line-height:1.45}
+.speedtest-interval{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.speedtest-interval>span{
+  color:var(--muted);
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.speedtest-interval .search{width:100%;min-width:0}
+.speedtest-notice{margin-bottom:14px}
+.compact-big{font-size:18px!important;line-height:1.25}
+@media(max-width:800px){
+  .speedtest-controls{grid-template-columns:1fr auto}
+  .speedtest-interval{grid-column:1/-1}
+}
+@media(max-width:540px){
+  .speedtest-controls{grid-template-columns:1fr}
+}
