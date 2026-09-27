@@ -125,13 +125,21 @@
 
       <div class="summary-grid" id="channelSummaryCards"></div>
 
+      <div class="section-head">
+        <div>
+          <h2>Coordinated RF target plan</h2>
+          <span class="muted">Shows the intended end-state across all APs so individual changes do not accidentally create a temporary long-term conflict.</span>
+        </div>
+      </div>
+      <div id="coordinatedRfPlan" class="panel table-wrap"></div>
+
       <div class="section-head"><h2>Current plan and recommendations</h2></div>
       <div id="channelPlanCards" class="channel-grid"></div>
 
       <div class="section-head">
         <div>
           <h2>Before / after tests</h2>
-          <span class="muted">Create a test before making a manual UniFi radio change, then mark it applied and let the app compare retry performance for at least 60 minutes.</span>
+          <span class="muted">A/B/A verification: 60-minute original baseline, 15-minute settling period, 60-minute new-setting observation, then rollback verification against the original setting.</span>
         </div>
         <button class="secondary" onclick="loadOptimizationTests()">Refresh tests</button>
       </div>
