@@ -4,15 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>UniFi Home Optimizer</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <header class="topbar">
-  <div>
-    <h1>UniFi Home Optimizer</h1>
-    <p>Home network monitoring & safe optimization · v{{ version }}</p>
+  <div class="brand">
+    <img src="/static/icon.svg" alt="" class="brand-icon">
+    <div><h1>UniFi Home Optimizer</h1><p>Home network monitoring & safe optimization · v{{ version }}</p></div>
   </div>
-  <div id="controllerPill" class="pill good">Controller connected</div>
+  <div class="top-status">
+    <span id="lastChecked" class="muted">Checking…</span>
+    <div id="controllerPill" class="pill good">Controller connected</div>
+  </div>
 </header>
 
 <div class="shell">
@@ -27,23 +31,41 @@
 
   <main>
     <section id="overview" class="page active">
-      <div class="cards">
-        <div class="card"><span>Network status</span><strong id="networkStatus" class="good">Checking…</strong></div>
-        <div class="card"><span>UniFi devices</span><strong id="deviceCount">—</strong></div>
-        <div class="card"><span>Clients</span><strong id="clientCount">—</strong></div>
-        <div class="card"><span>Access points</span><strong id="apCount">—</strong></div>
-        <div class="card"><span>High priority</span><strong id="highCount" class="bad">—</strong></div>
-        <div class="card"><span>Auto Optimize</span><strong id="autoSummary">—</strong></div>
+      <div class="hero">
+        <div>
+          <span class="eyebrow">NETWORK HEALTH</span>
+          <div class="score-line"><strong id="healthScore">—</strong><span>/100</span></div>
+          <div id="networkStatus" class="good">Checking…</div>
+        </div>
+        <div class="hero-meta">
+          <div><span>Devices</span><b id="deviceCount">—</b></div>
+          <div><span>Clients</span><b id="clientCount">—</b></div>
+          <div><span>APs</span><b id="apCount">—</b></div>
+          <div><span>Auto Optimize</span><b id="autoSummary">—</b></div>
+        </div>
       </div>
 
-      <div class="section-head"><h2>Needs attention</h2><button class="secondary" onclick="loadReport()">Refresh</button></div>
-      <div id="recommendations"></div>
+      <div class="section-head"><h2>Access point health</h2><button class="secondary" onclick="loadReport()">Refresh</button></div>
+      <div id="overviewApCards" class="summary-grid"></div>
+
+      <div class="section-head"><h2>Wi-Fi networks</h2></div>
+      <div id="overviewWifiCards" class="summary-grid"></div>
+
+      <div class="split-grid">
+        <div>
+          <div class="section-head"><h2>Wi-Fi findings</h2></div>
+          <div id="wifiFindings"></div>
+        </div>
+        <div>
+          <div class="section-head"><h2>Wired observations</h2></div>
+          <div id="wiredFindings"></div>
+        </div>
+      </div>
     </section>
 
     <section id="wifi" class="page">
       <div class="section-head"><h2>Access points</h2><span class="muted">Live radio configuration and retry health</span></div>
       <div id="apCards" class="ap-grid"></div>
-
       <div class="section-head"><h2>Wi-Fi networks</h2></div>
       <div id="wifiBroadcastCards" class="ap-grid"></div>
     </section>
@@ -51,10 +73,7 @@
     <section id="optimize" class="page">
       <div class="panel optimize-panel">
         <div class="toggle-row">
-          <div>
-            <h2>Auto Optimize</h2>
-            <p>Applies only documented, low-risk UniFi Wi-Fi settings.</p>
-          </div>
+          <div><h2>Auto Optimize</h2><p>Applies only documented, low-risk UniFi Wi-Fi settings.</p></div>
           <label class="switch"><input id="autoToggle" type="checkbox"><span></span></label>
         </div>
         <div class="policy-list">
@@ -71,12 +90,15 @@
     </section>
 
     <section id="clients" class="page">
-      <div class="section-head"><h2>Connected clients</h2></div>
+      <div class="section-head">
+        <h2>Connected clients</h2>
+        <input id="clientSearch" class="search" placeholder="Search clients…">
+      </div>
       <div class="panel table-wrap"><table><thead><tr><th>Name</th><th>IP</th><th>Type</th><th>Connected through</th><th>Model</th></tr></thead><tbody id="clientTable"></tbody></table></div>
     </section>
 
     <section id="switches" class="page">
-      <div class="section-head"><h2>Switch port health</h2></div>
+      <div class="section-head"><h2>Switch ports</h2><span class="muted">Negotiated link speed is informational unless the endpoint is expected to be faster.</span></div>
       <div id="switchContainer"></div>
     </section>
 
