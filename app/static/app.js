@@ -336,8 +336,9 @@ function renderChannelPlan(plan){
       const fmtBand=(band)=>{
         const x=ap.bands[String(band)];
         if(!x)return "—";
-        const ch=x.recommendedChannel==null?x.channel:x.recommendedChannel;
-        const w=x.recommendedWidthMHz==null?x.widthMHz:x.recommendedWidthMHz;
+        const useRecommended=x.status==="CONSIDER_CHANGE";
+        const ch=useRecommended && x.recommendedChannel!=null?x.recommendedChannel:x.channel;
+        const w=useRecommended && x.recommendedWidthMHz!=null?x.recommendedWidthMHz:x.widthMHz;
         return (ch==null?"—":ch)+" / "+(w==null?"—":w+" MHz");
       };
       rows+='<tr><td><b>'+esc(ap.name)+'</b><div class="muted">'+esc(ap.model)+'</div></td><td>'+esc(fmtBand(2.4))+'</td><td>'+esc(fmtBand(5))+'</td><td>'+esc(fmtBand(6))+'</td></tr>';
