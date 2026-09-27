@@ -121,6 +121,15 @@
       <div class="section-head"><h2>Current plan and recommendations</h2></div>
       <div id="channelPlanCards" class="channel-grid"></div>
 
+      <div class="section-head">
+        <div>
+          <h2>Before / after tests</h2>
+          <span class="muted">Create a test before making a manual UniFi radio change, then mark it applied and let the app compare retry performance for at least 60 minutes.</span>
+        </div>
+        <button class="secondary" onclick="loadOptimizationTests()">Refresh tests</button>
+      </div>
+      <div id="optimizationTests" class="test-grid"></div>
+
       <div class="section-head"><h2>Detected own-AP conflicts</h2></div>
       <div id="channelConflicts"></div>
 
