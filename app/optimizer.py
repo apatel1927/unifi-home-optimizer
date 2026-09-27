@@ -237,6 +237,17 @@ def _six_ghz_block(channel, width):
     end=start+span-4
     return f"{start}-{end}"
 
+def radio_conflict_key(band, channel, width):
+    if channel is None:
+        return None
+    if band == 2.4:
+        return str(channel)
+    if band == 5:
+        return _five_ghz_block(channel, width)
+    if band == 6:
+        return _six_ghz_block(channel, width)
+    return None
+
 def build_channel_plan(snapshot, retry_trends=None):
     retry_trends = retry_trends or {}
     aps=[d for d in snapshot.get("devices",[]) if d.get("optimizerType")=="ACCESS_POINT"]
