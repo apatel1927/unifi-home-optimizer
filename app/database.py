@@ -411,6 +411,18 @@ class Database:
         c.close()
         return dict(row) if row else None
 
+    def mark_test_applied_at(self, test_id, applied_at):
+        c=self.connect()
+        c.execute("""
+            UPDATE optimization_tests
+            SET applied_at=?, status='MONITORING', phase='SETTLING_NEW'
+            WHERE id=? AND status='PROPOSED'
+        """,(applied_at,test_id))
+        c.commit()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
     def cancel_test(self, test_id):
         now=datetime.now(timezone.utc).isoformat()
         c=self.connect()
