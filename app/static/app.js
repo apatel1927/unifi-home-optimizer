@@ -9,6 +9,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="history") loadHistory();
     if(btn.dataset.page==="roaming") loadRoaming();
     if(btn.dataset.page==="internet") loadInternet();
+    if(btn.dataset.page==="channels") loadChannelPlan();
   });
 });
 
@@ -60,7 +61,7 @@ async function loadReport(){
     document.getElementById("internetSummary").textContent=internetLatest?(internetLatest.online?"ONLINE":"OFFLINE"):"LEARNING";
     document.getElementById("internetSummary").className=internetLatest?(internetLatest.online?"good":"bad"):"info";
     document.getElementById("autoToggle").checked=d.autoOptimizeEnabled;
-    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);
+    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);renderChannelPlan(d.channelPlan);
   }catch(e){
     document.getElementById("controllerPill").textContent="Controller error";
     document.getElementById("controllerPill").className="pill bad";
@@ -242,4 +243,61 @@ async function loadInternet(){
   const r=await fetch("/api/internet",{cache:"no-store"});
   const d=await r.json();
   if(d.ok)renderInternet(d,report?.gateway);
+}
+
+
+function renderChannelPlan(plan){
+  if(!plan)return;
+  const items=plan.items||[];
+  const conflicts=plan.conflicts||[];
+  const keep=items.filter(x=>x.status==="KEEP").length;
+  const change=items.filter(x=>x.status==="CONSIDER_CHANGE").length;
+  const summary=document.getElementById("channelSummaryCards");
+  if(summary){
+    summary.innerHTML=
+      '<div class="summary-card"><h3>Radios analyzed</h3><div class="big">'+items.length+'</div></div>'+
+      '<div class="summary-card"><h3>Keep</h3><div class="big good">'+keep+'</div></div>'+
+      '<div class="summary-card"><h3>Consider change</h3><div class="big '+(change?"warn":"good")+'">'+change+'</div></div>'+
+      '<div class="summary-card"><h3>Own-AP conflicts</h3><div class="big '+(conflicts.length?"warn":"good")+'">'+conflicts.length+'</div></div>';
+  }
+
+  const box=document.getElementById("channelPlanCards");
+  if(box){
+    box.innerHTML="";
+    items.forEach(x=>{
+      const retry=x.retryPct==null?"—":x.retryPct.toFixed(1)+"%";
+      const actions=(x.actions||[]).map(a=>'<li>'+esc(a)+'</li>').join("");
+      const rec=(x.recommendedChannel==null?"—":x.recommendedChannel)+" / "+(x.recommendedWidthMHz==null?"—":x.recommendedWidthMHz+" MHz");
+      const current=(x.channel==null?"—":x.channel)+" / "+(x.widthMHz==null?"—":x.widthMHz+" MHz");
+      box.insertAdjacentHTML("beforeend",
+        '<div class="channel-card">'+
+          '<div class="channel-head"><div><h3>'+esc(x.apName)+'</h3><span class="muted">'+esc(x.band)+' GHz · '+esc(x.model)+'</span></div>'+
+          '<span class="status-tag '+(x.status==="KEEP"?"ALREADY_OPTIMIZED":"NEEDS_ATTENTION")+'">'+esc(x.status)+'</span></div>'+
+          '<div class="channel-metrics">'+
+            '<div><span>Current</span><b>'+esc(current)+'</b></div>'+
+            '<div><span>Recommended</span><b>'+esc(rec)+'</b></div>'+
+            '<div><span>Block</span><b>'+esc(x.channelBlock||"—")+'</b></div>'+
+            '<div><span>Retries</span><b class="'+retryClass(x.retryPct)+'">'+esc(retry)+'</b><small>'+esc(x.retryBasis||"")+'</small></div>'+
+          '</div>'+
+          '<ul class="channel-actions">'+actions+'</ul>'+
+        '</div>');
+    });
+  }
+
+  const cb=document.getElementById("channelConflicts");
+  if(cb){
+    cb.innerHTML=conflicts.length?conflicts.map(x=>
+      '<div class="recommendation MEDIUM"><div class="rec-top"><span class="badge">'+esc(x.band)+' GHz</span><b>'+esc((x.aps||[]).join(" ↔ "))+'</b></div><div class="rec-message">'+esc(x.detail)+'</div></div>'
+    ).join(""):'<div class="empty">No channel-block conflicts detected between your own APs.</div>';
+  }
+
+  const notes=document.getElementById("channelNotes");
+  if(notes){
+    notes.innerHTML=(plan.notes||[]).map(x=>'<div>• '+esc(x)+'</div>').join("");
+  }
+}
+async function loadChannelPlan(){
+  const r=await fetch("/api/channel-plan",{cache:"no-store"});
+  const d=await r.json();
+  if(d.ok)renderChannelPlan(d);
 }
