@@ -51,8 +51,9 @@ def build_snapshot(api):
         "wifiBroadcasts": api.wifi_broadcasts(site_id),
     }
 
-def analyze(snapshot, retry_trends=None):
+def analyze(snapshot, retry_trends=None, ap_baselines=None):
     retry_trends = retry_trends or {}
+    ap_baselines = ap_baselines or {}
     recs = []
     aps = [d for d in snapshot["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     avg = (sum(d.get("clientCount",0) for d in aps) / len(aps)) if aps else 0
@@ -88,9 +89,15 @@ def analyze(snapshot, retry_trends=None):
                     recs.append({"severity":"INFO","category":"RETRIES","device":d.get("name"),
                                  "message":f"{f} GHz TX retries are {retries:.1f}% ({basis}); watch for persistence."})
 
-            if len(aps) >= 2 and avg and d.get("clientCount",0) > avg*1.8:
+            baseline=ap_baselines.get(d.get("id")) or {}
+            baseline_avg=baseline.get("avgClients")
+            samples=baseline.get("sampleCount",0)
+            if samples >= 30 and baseline_avg is not None and d.get("clientCount",0) > max(float(baseline_avg)*1.8,float(baseline_avg)+6):
                 recs.append({"severity":"INFO","category":"AP_BALANCE","device":d.get("name"),
-                             "message":f"{d.get('clientCount',0)} clients vs AP average {avg:.1f}."})
+                             "message":f"{d.get('clientCount',0)} clients vs this AP's 24h baseline {baseline_avg:.1f}."})
+            elif samples < 30 and len(aps) >= 2 and avg and d.get("clientCount",0) > avg*1.8:
+                recs.append({"severity":"INFO","category":"AP_BALANCE","device":d.get("name"),
+                             "message":f"{d.get('clientCount',0)} clients vs current AP average {avg:.1f}; learning historical baseline."})
 
         if d.get("optimizerType") in ("SWITCH","GATEWAY"):
             for p in ((d.get("interfaces") or {}).get("ports") or []):
