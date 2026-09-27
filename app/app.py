@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from flask import Flask, jsonify, render_template, request
 
 from .database import Database
@@ -9,7 +10,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.8.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.8.1"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -34,7 +35,10 @@ def report_data():
         "ok":True,"version":VERSION,"site":snap["site"],"devices":snap["devices"],
         "accessPoints":aps,"switches":switches,"clients":snap["clients"],
         "wifiBroadcasts":wifi,"analysis":analysis,
-        "autoOptimizeEnabled":db.get_setting("auto_optimize_enabled","0")=="1"
+        "autoOptimizeEnabled":db.get_setting("auto_optimize_enabled","0")=="1",
+        "lastChecked":datetime.now(timezone.utc).isoformat(),
+        "pollIntervalSeconds":POLL_INTERVAL,
+        "retentionDays":RETENTION_DAYS
     }
 
 def monitor_loop():
