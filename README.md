@@ -2,9 +2,17 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.9.4
+## v0.10.0
 
 - Modernized dashboard visual design with improved navigation, cards, tables, responsiveness and status hierarchy
+- Automatic detection of manual radio changes for active before/after tests
+- Live elapsed / remaining test timer with progress bar
+- 24-hour network health score history chart
+- Historical per-AP client-load baselines for smarter load findings
+- System & Diagnostics page with poll status, database size, retention, monitor health and last errors
+- Optional local browser alerts for Internet outages, AP outages and completed optimization tests
+- Completed RF tests are written into Optimization History
+- Experimental Auto RF readiness panel remains read-only until private UniFi authentication and U7 radio payloads are verified
 - New Channel Planner page for 2.4, 5 and 6 GHz
 - Detects proven channel/block conflicts between your own APs
 - Uses current radio settings, client load and retry trends to recommend KEEP or CONSIDER CHANGE
