@@ -92,6 +92,15 @@ class Database:
         );
         CREATE INDEX IF NOT EXISTS idx_optimization_tests_status
             ON optimization_tests(status);
+        CREATE TABLE IF NOT EXISTS health_history(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            score REAL NOT NULL,
+            high_count INTEGER NOT NULL,
+            medium_count INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_health_history_ts
+            ON health_history(ts);
         """)
         # Lightweight schema migrations for databases created by older releases.
         ap_cols = {row[1] for row in c.execute("PRAGMA table_info(ap_history)").fetchall()}
@@ -385,7 +394,7 @@ class Database:
 
     def database_stats(self):
         c=self.connect()
-        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests"]
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history"]
         counts={}
         for table in tables:
             try:
@@ -424,3 +433,29 @@ class Database:
                 "windowHours":hours
             } for r in rows
         }
+
+
+    def record_health_score(self, score, high_count, medium_count):
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        c.execute("""
+            INSERT INTO health_history(ts,score,high_count,medium_count)
+            VALUES(?,?,?,?)
+        """,(now,float(score),int(high_count),int(medium_count)))
+        c.execute("DELETE FROM health_history WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def health_history(self, hours=24, limit=720):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+        rows=c.execute("""
+            SELECT ts,score,high_count,medium_count
+            FROM health_history
+            WHERE ts >= ?
+            ORDER BY id DESC
+            LIMIT ?
+        """,(cutoff,limit)).fetchall()
+        c.close()
+        return list(reversed([dict(r) for r in rows]))
