@@ -92,6 +92,7 @@ function renderFindingList(id,list,emptyText){
   box.innerHTML=list.length?list.map(findingHtml).join(""):`<div class="empty">${esc(emptyText)}</div>`;
 }
 function renderOverview(){
+  renderHealthTrend(report.healthHistory||[]);
   const apBox=document.getElementById("overviewApCards");apBox.innerHTML="";
   report.accessPoints.forEach(ap=>{
     const r=maxRetry(ap);
@@ -105,6 +106,25 @@ function renderOverview(){
   });
   renderFindingList("wifiFindings",report.analysis.wifiFindings||[],"No current Wi-Fi findings.");
   renderFindingList("wiredFindings",report.analysis.wiredFindings||[],"No wired observations.");
+}
+
+function renderHealthTrend(items){
+  const chart=document.getElementById("healthScoreChart");
+  const summary=document.getElementById("healthTrendSummary");
+  if(!chart||!summary)return;
+  if(!items.length){
+    chart.innerHTML=chartGrid();
+    summary.textContent="Learning…";
+    return;
+  }
+  const vals=items.map(x=>typeof x.score==="number"?x.score:null);
+  chart.innerHTML=chartGrid()+svgLine(vals,100,"chart-line-health");
+  const first=vals.find(x=>x!=null);
+  const last=[...vals].reverse().find(x=>x!=null);
+  const low=Math.min(...vals.filter(Number.isFinite));
+  const high=Math.max(...vals.filter(Number.isFinite));
+  const delta=(first!=null&&last!=null)?last-first:0;
+  summary.textContent="Low "+low.toFixed(0)+" · High "+high.toFixed(0)+" · "+(delta>=0?"+":"")+delta.toFixed(0)+" pts";
 }
 
 function renderAPs(){
