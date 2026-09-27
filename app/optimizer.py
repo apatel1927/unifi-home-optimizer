@@ -285,12 +285,16 @@ def build_channel_plan(snapshot, retry_trends=None):
         ch=row.get("channel"); width=row.get("widthMHz"); retry=row.get("retryPct")
         rec_ch=ch if ch in (1,6,11) else next((x for x in (1,6,11) if x not in used24),1)
         used24.add(rec_ch)
-        actions=[]
-        if width and width>20: actions.append("Change width to 20 MHz")
-        if ch not in (1,6,11): actions.append(f"Move to channel {rec_ch}")
-        if retry is not None and retry>=15: actions.append("Investigate external interference / client quality")
+        config_actions=[]
+        diagnostic_actions=[]
+        if width and width>20: config_actions.append("Change width to 20 MHz")
+        if ch not in (1,6,11): config_actions.append(f"Move to channel {rec_ch}")
+        if retry is not None and retry>=15: diagnostic_actions.append("Investigate external interference / client quality")
+        testable=(rec_ch!=ch or 20!=width)
+        status="CONSIDER_CHANGE" if testable else ("INVESTIGATE" if diagnostic_actions else "KEEP")
+        actions=config_actions+diagnostic_actions
         plan.append({**row,"recommendedChannel":rec_ch,"recommendedWidthMHz":20,
-                     "status":"CONSIDER_CHANGE" if actions else "KEEP",
+                     "testableChange":testable,"status":status,
                      "actions":actions or ["Keep current 2.4 GHz channel plan"]})
 
     preferred5=[
@@ -311,14 +315,18 @@ def build_channel_plan(snapshot, retry_trends=None):
         if target is None:
             target=next((x for x in preferred5 if x["block"] not in assigned),preferred5[0])
         assigned.add(target["block"])
-        actions=[]
+        config_actions=[]
+        diagnostic_actions=[]
         if current!=target["block"]:
-            actions.append(f"Consider {target['block']} block (primary channel {target['channel']})")
+            config_actions.append(f"Consider {target['block']} block (primary channel {target['channel']})")
         if row.get("retryPct") is not None and row["retryPct"]>=15:
-            actions.append("High retry trend: prioritize a cleaner block after RF survey")
+            diagnostic_actions.append("High retry trend: prioritize a cleaner block after RF survey")
+        testable=(current!=target["block"] or row.get("widthMHz")!=80)
+        status="CONSIDER_CHANGE" if testable else ("INVESTIGATE" if diagnostic_actions else "KEEP")
+        actions=config_actions+diagnostic_actions
         plan.append({**row,"recommendedChannel":target["channel"],"recommendedWidthMHz":80,
                      "recommendedBlock":target["block"],"dfs":target["dfs"],
-                     "status":"CONSIDER_CHANGE" if actions else "KEEP",
+                     "testableChange":testable,"status":status,
                      "actions":actions or ["Keep current 5 GHz block"]})
 
     used6=set()
@@ -335,8 +343,10 @@ def build_channel_plan(snapshot, retry_trends=None):
         if row.get("retryPct") is not None and row["retryPct"]>=15 and row.get("widthMHz",0)>160:
             recommended_width=160
             actions.append("Elevated retries: consider reducing 320 MHz to 160 MHz")
+        testable=(recommended_width!=row.get("widthMHz"))
+        status="CONSIDER_CHANGE" if testable else ("INVESTIGATE" if actions else "KEEP")
         plan.append({**row,"recommendedChannel":row.get("channel"),"recommendedWidthMHz":recommended_width,
-                     "status":"CONSIDER_CHANGE" if actions else "KEEP",
+                     "testableChange":testable,"status":status,
                      "actions":actions or ["Keep current 6 GHz channel block"]})
 
     return {
