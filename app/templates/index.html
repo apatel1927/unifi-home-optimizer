@@ -24,7 +24,7 @@
     <button class="nav active" data-page="overview">Overview</button>
     <button class="nav" data-page="wifi">Wi-Fi</button>
     <button class="nav" data-page="optimize">Auto Optimize</button>
-    <button class="nav" data-page="clients">Clients</button>
+    <button class="nav" data-page="clients">Clients</button>\n    <button class="nav" data-page="roaming">Roaming</button>
     <button class="nav" data-page="switches">Switches</button>
     <button class="nav" data-page="history">History</button>
   </aside>
@@ -95,6 +95,21 @@
         <input id="clientSearch" class="search" placeholder="Search clients…">
       </div>
       <div class="panel table-wrap"><table><thead><tr><th>Name</th><th>IP</th><th>Type</th><th>Connected through</th><th>Model</th></tr></thead><tbody id="clientTable"></tbody></table></div>
+    </section>
+
+    <section id="roaming" class="page">
+      <div class="section-head">
+        <div><h2>Roaming analyzer</h2><span class="muted">Tracks AP association changes over time using the official UniFi API.</span></div>
+        <button class="secondary" onclick="loadRoaming()">Refresh</button>
+      </div>
+      <div class="panel notice">
+        Signal strength/RSSI is not exposed by the official connected-client API used by this app, so this page does not claim which AP has the strongest signal yet. It tracks real AP changes and highlights excessive roaming.
+      </div>
+      <div class="summary-grid" id="roamingSummaryCards"></div>
+      <div class="section-head"><h2>Wireless clients</h2></div>
+      <div class="panel table-wrap"><table><thead><tr><th>Client</th><th>Current AP</th><th>24h AP changes</th><th>Last AP change</th><th>Status</th></tr></thead><tbody id="roamingClientTable"></tbody></table></div>
+      <div class="section-head"><h2>Recent AP changes</h2></div>
+      <div class="panel table-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>From</th><th>To</th></tr></thead><tbody id="roamEventTable"></tbody></table></div>
     </section>
 
     <section id="switches" class="page">
