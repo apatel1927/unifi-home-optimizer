@@ -97,7 +97,9 @@ function renderOverview(){
   report.accessPoints.forEach(ap=>{
     const r=maxRetry(ap);
     const cls=retryClass(r);
-    apBox.insertAdjacentHTML("beforeend",`<div class="summary-card"><h3>${esc(ap.name)}</h3><div class="muted">${esc(ap.clientCount)} clients · ${esc(ap.state)}</div><div class="big ${cls}">${r==null?"—":r.toFixed(1)+"%"}</div><div class="muted">highest TX retry · ${esc(retryBasis(ap))}</div></div>`);
+    const base=(report.apBaselines||{})[ap.id];
+    const clientLine=base&&base.sampleCount>=30?`${esc(ap.clientCount)} clients · 24h baseline ${Number(base.avgClients).toFixed(1)}`:`${esc(ap.clientCount)} clients · ${esc(ap.state)}`;
+    apBox.insertAdjacentHTML("beforeend",`<div class="summary-card"><h3>${esc(ap.name)}</h3><div class="muted">${clientLine}</div><div class="big ${cls}">${r==null?"—":r.toFixed(1)+"%"}</div><div class="muted">highest TX retry · ${esc(retryBasis(ap))}</div></div>`);
   });
   const wifiBox=document.getElementById("overviewWifiCards");wifiBox.innerHTML="";
   report.wifiBroadcasts.forEach(w=>{
