@@ -406,6 +406,80 @@ def optimization_tests():
     snap=build_snapshot(api)
     return jsonify({"ok":True,"items":evaluate_optimization_tests(snap)})
 
+@app.route("/api/optimization-tests/recover",methods=["POST"])
+def optimization_test_recover():
+    body=request.get_json(silent=True) or {}
+    required=["apId","apName","band"]
+    if any(body.get(k) in (None,"") for k in required):
+        return jsonify({"ok":False,"error":"Missing recovery fields"}),400
+
+    band=float(body.get("band"))
+    snap=build_snapshot(api)
+    live=_current_radio_config(snap,body.get("apId"),band) if snap else None
+    if not live:
+        return jsonify({"ok":False,"error":"Unable to read the current radio configuration"}),400
+
+    change=db.recent_radio_change(body.get("apId"),band,24)
+    original_channel=None
+    original_width=None
+    applied_at=None
+    source="manual"
+
+    if change and change.get("to_channel")==live.get("channel") and change.get("to_width_mhz")==live.get("widthMHz"):
+        original_channel=change.get("from_channel")
+        original_width=change.get("from_width_mhz")
+        applied_at=change.get("ts")
+        source="history"
+    else:
+        original_channel=body.get("originalChannel")
+        original_width=body.get("originalWidthMHz")
+        minutes_ago=body.get("minutesAgo")
+        if original_channel is None or original_width is None or minutes_ago in (None,""):
+            return jsonify({
+                "ok":False,
+                "needsManual":True,
+                "currentChannel":live.get("channel"),
+                "currentWidthMHz":live.get("widthMHz"),
+                "error":"No recorded pre-change configuration is available yet. Enter the previous channel, previous width, and approximately how many minutes ago the change was applied."
+            }),400
+        try:
+            applied_at=(datetime.now(timezone.utc)-timedelta(minutes=float(minutes_ago))).isoformat()
+        except Exception:
+            return jsonify({"ok":False,"error":"Invalid minutes-ago value"}),400
+
+    if original_channel==live.get("channel") and original_width==live.get("widthMHz"):
+        return jsonify({"ok":False,"error":"The previous and current RF settings are identical."}),400
+
+    applied_dt=datetime.fromisoformat(applied_at)
+    if applied_dt.tzinfo is None:
+        applied_dt=applied_dt.replace(tzinfo=timezone.utc)
+    baseline_stats=db.ap_window_stats(
+        body.get("apId"),band,
+        (applied_dt-timedelta(minutes=60)).isoformat(),
+        applied_dt.isoformat()
+    )
+    baseline60=baseline_stats.get("retryAvg")
+
+    item=db.create_optimization_test(
+        body.get("apId"),body.get("apName"),band,
+        live.get("channel"),live.get("widthMHz"),
+        original_channel,original_width,
+        "Recovered already-applied RF change",
+        baseline60,
+        "60-min pre-change recovery baseline" if baseline60 is not None else "recovery baseline unavailable",
+        baseline60,
+        baseline_stats.get("clientAvg"),
+        baseline_stats.get("sampleCount")
+    )
+    item=db.mark_test_applied_at(item["id"],applied_at)
+    db.log(
+        "RF_TEST_RECOVERED",
+        body.get("apName"),
+        str(band)+" GHz "+str(original_channel)+"/"+str(original_width)+" -> "+str(live.get("channel"))+"/"+str(live.get("widthMHz"))+" ("+source+")",
+        "MONITORING"
+    )
+    return jsonify({"ok":True,"item":item,"source":source})
+
 @app.route("/api/optimization-tests/<int:test_id>/mark-applied",methods=["POST"])
 def optimization_test_mark_applied(test_id):
     item=db.mark_test_applied(test_id)
