@@ -25,6 +25,7 @@
     <button class="nav" data-page="wifi">Wi-Fi</button>
     <button class="nav" data-page="channels">Channel Planner</button>
     <button class="nav" data-page="internet">Internet</button>
+    <button class="nav" data-page="speedtest">Speed Test</button>
     <button class="nav" data-page="optimize">Auto Optimize</button>
     <button class="nav" data-page="clients">Clients</button>
     <button class="nav" data-page="roaming">Roaming</button>
@@ -107,6 +108,69 @@
       <div class="section-head"><h2>Internet monitoring notes</h2></div>
       <div class="panel notice">
         Internet availability is measured by this app from your Unraid server. Gateway uptime is the UDM's device uptime, not necessarily the ISP session uptime. Throughput comes from the UDM gateway uplink statistics exposed by the UniFi Network API.
+      </div>
+    </section>
+
+    <section id="speedtest" class="page">
+      <div class="section-head">
+        <div>
+          <h2>Internet Speed Test</h2>
+          <span class="muted">Automatic WAN speed testing from the Unraid server with download, upload and ping history.</span>
+        </div>
+        <button id="runSpeedtestBtn">Run Speed Test Now</button>
+      </div>
+
+      <div class="panel speedtest-controls">
+        <div class="speedtest-control-copy">
+          <h3>Automatic testing</h3>
+          <p class="muted">Runs in the background and stores results for your configured retention period. Automatic tests pause while an RF A/B/A test is active.</p>
+        </div>
+        <label class="switch"><input id="speedtestAutoToggle" type="checkbox"><span></span></label>
+        <label class="speedtest-interval">
+          <span>Run every</span>
+          <select id="speedtestInterval" class="search">
+            <option value="1">1 hour</option>
+            <option value="3">3 hours</option>
+            <option value="6">6 hours</option>
+            <option value="12">12 hours</option>
+            <option value="24">24 hours</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="speedtestNotice" class="panel notice speedtest-notice">Loading speed test status…</div>
+
+      <div class="summary-grid">
+        <div class="summary-card"><h3>Download</h3><div id="speedtestDownload" class="big">—</div><div class="muted">Latest successful test</div></div>
+        <div class="summary-card"><h3>Upload</h3><div id="speedtestUpload" class="big">—</div><div class="muted">Latest successful test</div></div>
+        <div class="summary-card"><h3>Ping</h3><div id="speedtestPing" class="big">—</div><div class="muted">Speed test server latency</div></div>
+        <div class="summary-card"><h3>Server</h3><div id="speedtestServer" class="big compact-big">—</div><div id="speedtestServerDetail" class="muted">—</div></div>
+        <div class="summary-card"><h3>Last test</h3><div id="speedtestLastRun" class="big compact-big">—</div><div id="speedtestLastDuration" class="muted">—</div></div>
+        <div class="summary-card"><h3>Next automatic test</h3><div id="speedtestNextRun" class="big compact-big">—</div><div class="muted">Based on selected interval</div></div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="panel chart-panel">
+          <div class="chart-title"><h3>Speed history</h3><span id="speedtestSpeedSummary" class="muted">30-day history</span></div>
+          <svg id="speedtestSpeedChart" class="spark-chart" viewBox="0 0 800 220" preserveAspectRatio="none"></svg>
+          <div class="chart-legend"><span>Download</span><span>Upload</span></div>
+        </div>
+        <div class="panel chart-panel">
+          <div class="chart-title"><h3>Ping history</h3><span id="speedtestPingSummary" class="muted">30-day history</span></div>
+          <svg id="speedtestPingChart" class="spark-chart" viewBox="0 0 800 220" preserveAspectRatio="none"></svg>
+          <div class="chart-legend"><span>Lower is better</span><span>Speed test server ping</span></div>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <div><h2>Speed test history</h2><span class="muted">Most recent automatic and manual results.</span></div>
+        <button class="secondary" onclick="loadSpeedtest()">Refresh</button>
+      </div>
+      <div class="panel table-wrap">
+        <table>
+          <thead><tr><th>Date & time</th><th>Download</th><th>Upload</th><th>Ping</th><th>Server</th><th>Duration</th><th>Status</th></tr></thead>
+          <tbody id="speedtestHistoryTable"></tbody>
+        </table>
       </div>
     </section>
 
