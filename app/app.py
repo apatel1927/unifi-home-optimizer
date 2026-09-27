@@ -8,11 +8,11 @@ from flask import Flask, jsonify, render_template, request
 
 from .database import Database
 from .unifi_api import UniFiAPI
-from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status
+from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, build_channel_plan
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.9.1"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.9.2"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -33,6 +33,7 @@ def report_data():
         print("Retry trend error:", e, flush=True)
         retry_trends = {}
     analysis = analyze(snap, retry_trends)
+    channel_plan = build_channel_plan(snap, retry_trends)
     aps = [d for d in snap["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     switches = [d for d in snap["devices"] if d.get("optimizerType") in ("SWITCH","GATEWAY")]
     gateway = next((d for d in snap["devices"] if d.get("optimizerType") == "GATEWAY"), None)
@@ -60,6 +61,7 @@ def report_data():
         "retentionDays":RETENTION_DAYS,
         "roaming":roaming_data,
         "retryTrends":retry_trends,
+        "channelPlan":channel_plan,
         "gateway":gateway,
         "internet":internet_data
     }
@@ -146,6 +148,17 @@ def roaming():
 @app.route("/api/internet")
 def internet():
     return jsonify({"ok":True,**db.internet_summary(24)})
+
+@app.route("/api/channel-plan")
+def channel_plan():
+    snap=build_snapshot(api)
+    if not snap:
+        return jsonify({"ok":False,"error":"Unable to retrieve UniFi data"}),500
+    try:
+        retry_trends=db.ap_retry_trends(15)
+    except Exception:
+        retry_trends={}
+    return jsonify({"ok":True,**build_channel_plan(snap,retry_trends)})
 
 @app.route("/health")
 def health():
