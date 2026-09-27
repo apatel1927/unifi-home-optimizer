@@ -453,8 +453,8 @@ document.addEventListener("click",e=>{
 });
 
 function testStatusClass(status){
-  if(["IMPROVED","IMPROVED_CONFIRMED"].includes(status))return "ALREADY_OPTIMIZED";
-  if(["WORSE","WORSE_CONFIRMED"].includes(status))return "FAILED";
+  if(["IMPROVED","IMPROVED_CONFIRMED","IMPROVED_TOPOLOGY"].includes(status))return "ALREADY_OPTIMIZED";
+  if(["WORSE","WORSE_CONFIRMED","WORSE_TOPOLOGY"].includes(status))return "FAILED";
   if(["MONITORING","ROLLBACK_MONITORING","ROLLBACK_REQUIRED"].includes(status))return "PROTECTED";
   if(["NO_CHANGE","NO_MEANINGFUL_CHANGE","INCONCLUSIVE","INCONCLUSIVE_LOAD_CHANGED","INCONCLUSIVE_ENVIRONMENT_CHANGED","INVALID_NO_CHANGE"].includes(status))return "NEEDS_ATTENTION";
   if(status==="CANCELLED")return "SKIPPED";
@@ -521,6 +521,14 @@ function renderOptimizationTests(items){
 
     const postDelta=(baseline60!=null&&t.post_retry_avg!=null)?Number(t.post_retry_avg)-Number(baseline60):null;
     const rollbackDelta=(baseline60!=null&&t.rollback_retry_avg!=null)?Number(t.rollback_retry_avg)-Number(baseline60):null;
+    const topo=t.topology||null;
+    const topologyHtml=topo
+      ? '<div class="topology-result">'+
+          '<span>Own-AP conflicts</span>'+
+          '<b>'+esc(topo.originalTargetConflicts)+' → '+esc(topo.proposedTargetConflicts)+'</b>'+
+          '<small>'+(topo.proposedTargetConflicts<topo.originalTargetConflicts?'B removes overlap':topo.proposedTargetConflicts>topo.originalTargetConflicts?'B adds overlap':'No topology change')+'</small>'+
+        '</div>'
+      : '';
 
     box.insertAdjacentHTML("beforeend",
       '<div class="test-card">'+
@@ -537,6 +545,7 @@ function renderOptimizationTests(items){
           '<div><span>Rollback samples</span><b>'+esc(t.rollback_sample_count??"—")+'</b></div>'+
           '<div><span>Preliminary</span><b>'+esc(t.preliminary_result||"—")+'</b></div>'+
         '</div>'+
+        topologyHtml+
         '<div class="test-description">'+esc(t.description||"")+'</div>'+
         timing+
         '<div class="test-controls">'+controls+'</div>'+
@@ -601,7 +610,7 @@ function processAlerts(d){
   for(const t of (d.optimizationTests||[])){
     const old=previousAlertState.testResults.get(t.id);
     const cur=t.result||t.status;
-    if(old && old!==cur && ["IMPROVED_CONFIRMED","WORSE_CONFIRMED","NO_MEANINGFUL_CHANGE","INCONCLUSIVE","INCONCLUSIVE_LOAD_CHANGED","INCONCLUSIVE_ENVIRONMENT_CHANGED"].includes(cur)){
+    if(old && old!==cur && ["IMPROVED_CONFIRMED","IMPROVED_TOPOLOGY","WORSE_CONFIRMED","WORSE_TOPOLOGY","NO_MEANINGFUL_CHANGE","INCONCLUSIVE","INCONCLUSIVE_LOAD_CHANGED","INCONCLUSIVE_ENVIRONMENT_CHANGED"].includes(cur)){
       maybeNotify("Wi-Fi optimization test complete",t.ap_name+" "+t.band+" GHz: "+cur);
     }
     previousAlertState.testResults.set(t.id,cur);
