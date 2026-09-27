@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>UniFi Home Optimizer</title>
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v={{ version }}">
 </head>
 <body>
 <header class="topbar">
@@ -24,7 +24,8 @@
     <button class="nav active" data-page="overview">Overview</button>
     <button class="nav" data-page="wifi">Wi-Fi</button>
     <button class="nav" data-page="optimize">Auto Optimize</button>
-    <button class="nav" data-page="clients">Clients</button>\n    <button class="nav" data-page="roaming">Roaming</button>
+    <button class="nav" data-page="clients">Clients</button>
+    <button class="nav" data-page="roaming">Roaming</button>
     <button class="nav" data-page="switches">Switches</button>
     <button class="nav" data-page="history">History</button>
   </aside>
@@ -123,6 +124,6 @@
     </section>
   </main>
 </div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{ version }}"></script>
 </body>
 </html>
