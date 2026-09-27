@@ -319,7 +319,12 @@ function renderChannelPlan(plan){
             '<div><span>Retries</span><b class="'+retryClass(x.retryPct)+'">'+esc(retry)+'</b><small>'+esc(x.retryBasis||"")+'</small></div>'+
           '</div>'+
           '<ul class="channel-actions">'+actions+'</ul>'+
-          (x.testableChange?'<div class="channel-test-action"><button class="start-test-btn" data-test-index="'+items.indexOf(x)+'">Create '+esc(x.band)+' GHz A/B/A test</button></div>':(x.status==="INVESTIGATE"?'<div class="channel-test-action"><span class="muted">Monitoring only — no channel/width change is proposed, so an A/B/A test is not applicable.</span></div>':''))+
+          (x.testableChange
+            ?'<div class="channel-test-action"><button class="start-test-btn" data-test-index="'+items.indexOf(x)+'">Create '+esc(x.band)+' GHz A/B/A test</button></div>'
+            :'<div class="channel-test-action">'+
+               (x.status==="INVESTIGATE"?'<span class="muted">Monitoring only — no new channel/width change is proposed.</span> ':'')+
+               '<button class="secondary recover-test-btn" data-test-index="'+items.indexOf(x)+'">Recover applied change</button>'+
+             '</div>')+
         '</div>');
     });
   }
@@ -395,9 +400,56 @@ async function startOptimizationTest(index){
   }
 }
 
+async function recoverOptimizationTest(index){
+  const plan=window.channelPlanData||{};
+  const x=(plan.items||[])[index];
+  if(!x)return;
+
+  const baseBody={apId:x.apId,apName:x.apName,band:x.band};
+  let r=await fetch("/api/optimization-tests/recover",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(baseBody)
+  });
+  let d=await r.json();
+
+  if(!d.ok && d.needsManual){
+    const prevChannel=prompt("Previous "+x.band+" GHz channel before the change:");
+    if(prevChannel===null)return;
+    const prevWidth=prompt("Previous "+x.band+" GHz channel width in MHz:");
+    if(prevWidth===null)return;
+    const minutesAgo=prompt("About how many minutes ago did you apply the change?","15");
+    if(minutesAgo===null)return;
+
+    r=await fetch("/api/optimization-tests/recover",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        ...baseBody,
+        originalChannel:Number(prevChannel),
+        originalWidthMHz:Number(prevWidth),
+        minutesAgo:Number(minutesAgo)
+      })
+    });
+    d=await r.json();
+  }
+
+  if(d.ok){
+    await loadOptimizationTests();
+    alert("Recovered "+x.band+" GHz change and started A/B/A monitoring.");
+  }else{
+    alert(d.error||"Unable to recover the applied RF change.");
+  }
+}
+
 document.addEventListener("click",e=>{
   const b=e.target.closest(".start-test-btn");
-  if(b)startOptimizationTest(Number(b.dataset.testIndex));
+  if(b){
+    startOptimizationTest(Number(b.dataset.testIndex));
+    return;
+  }
+  const recover=e.target.closest(".recover-test-btn");
+  if(recover)recoverOptimizationTest(Number(recover.dataset.testIndex));
 });
 
 function testStatusClass(status){
