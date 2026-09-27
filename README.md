@@ -2,8 +2,14 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.13.0
+## v0.14.0
 
+- Automatic Internet speed testing from the Unraid server with persistent download, upload, and ping history
+- Dedicated Speed Test page with Run Now, automatic enable/disable, and 1/3/6/12/24-hour intervals
+- Default automatic interval is 6 hours
+- 30-day speed and ping charts plus detailed test history including server and duration
+- Automatic speed tests are deferred while an RF A/B/A test is active to avoid adding traffic during RF measurements
+- Failed speed tests are recorded with the error for troubleshooting
 - Client page now supports selectable filters for access point/uplink, connection type, VLAN, and network
 - Client list can be grouped by access point/uplink, VLAN, network, or connection type
 - Client sorting includes IP low-to-high/high-to-low, name, VLAN, network, access point, and connection type
@@ -115,3 +121,10 @@ Protected / monitor-only by default:
 ## Security
 
 Never commit your UniFi API key. Store it only in the Unraid container environment.
+
+
+## Speed testing
+
+Automatic speed testing is enabled by default and runs every 6 hours. The interval can be changed from the Speed Test page without editing the container. Tests originate from the Unraid server, so they measure the server-to-Internet path rather than Wi-Fi performance of an individual client.
+
+A full speed test can transfer a meaningful amount of data, especially on fast Internet connections. Increase the interval if you want to reduce test traffic.
