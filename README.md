@@ -2,8 +2,15 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.11.1
+## v0.12.0
 
+- Experimental Auto RF can automate A/B/A channel and width changes after an explicit write-path validation
+- Adds a separate cookie/CSRF classic UniFi API client for the per-AP radio controls missing from the supported Integration API
+- Staged safety flow: credentials -> read-only radio_table discovery -> explicit no-op write validation -> Auto RF enable
+- Auto RF applies the B setting, rolls back to A for verification, and re-applies B only when the A/B/A result is IMPROVED_CONFIRMED
+- Any private API write failure disables Auto RF automatically
+- Private API credentials stay in Unraid environment variables and are never stored in the SQLite database
+- New optional Unraid variables: UNIFI_PRIVATE_USERNAME, UNIFI_PRIVATE_PASSWORD, and UNIFI_SITE_NAME
 - Cancel button is available on every active RF test phase
 - Invalid A/B/A tests with identical original and proposed settings are automatically closed as INVALID_NO_CHANGE
 - Diagnostic-only retry findings now show INVESTIGATE and cannot create a fake A/B/A test
@@ -43,7 +50,7 @@ Self-hosted UniFi Network monitoring and safe optimization dashboard designed fo
 
 ## Channel Planner limitations
 
-The official UniFi Network API used by this app does not expose a documented neighboring-network RF scan or supported per-AP radio channel/width/power write endpoint. The planner therefore analyzes your own AP configuration and measured retry trends, and keeps channel changes advisory-only.
+The official UniFi Network Integration API used by this app does not expose a documented neighboring-network RF scan or supported per-AP radio channel/width/power write endpoint. Experimental Auto RF therefore uses UniFi's local classic API for channel/width writes only after a separate local-admin login, read-only discovery, and an explicit no-op write validation. The private path is undocumented and may change between UniFi releases.
 
 ## Internet monitoring
 
@@ -86,10 +93,9 @@ Currently automatic:
 - Band Steering on eligible STANDARD Wi-Fi broadcasts
 - BSS Transition on eligible STANDARD Wi-Fi broadcasts
 
-Protected / monitor-only:
+Protected / monitor-only by default:
 - IOT_OPTIMIZED broadcasts
-- AP channel
-- channel width
+- AP channel and channel width unless Experimental Auto RF has been explicitly validated and enabled
 - transmit power
 - Minimum RSSI
 - SSID credentials
