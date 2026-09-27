@@ -472,3 +472,64 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 .topology-result small{text-transform:none}
 .status-tag.IMPROVED_TOPOLOGY{color:var(--good)}
 .status-tag.WORSE_TOPOLOGY{color:var(--bad)}
+
+
+/* v0.13.0 client inventory controls */
+.client-summary-grid{margin-bottom:14px}
+.client-filter-panel{padding:16px;margin-bottom:16px}
+.client-filter-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(150px,1fr));
+  gap:12px;
+  align-items:end;
+}
+.client-filter{display:flex;flex-direction:column;gap:6px;min-width:0}
+.client-filter.wide{grid-column:span 2}
+.client-filter>span{
+  color:var(--muted);
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.client-filter .search{width:100%;min-width:0}
+.client-filter-summary{
+  margin-top:12px;
+  padding-top:12px;
+  border-top:1px solid rgba(85,116,158,.13);
+}
+.client-table-panel th[data-client-sort]{cursor:pointer;user-select:none}
+.client-table-panel th[data-client-sort]:hover{color:#dbe8ff;background:#101d2f}
+.client-ip,.client-mac{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+.vlan-pill{
+  display:inline-flex;
+  align-items:center;
+  padding:4px 7px;
+  border-radius:999px;
+  background:rgba(79,140,255,.10);
+  border:1px solid rgba(79,140,255,.18);
+  color:#bed3ff;
+  font-size:10px;
+  font-weight:800;
+  white-space:nowrap;
+}
+.client-group{margin-bottom:18px}
+.client-group-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin:18px 2px 8px;
+}
+.client-group-head h3{margin:0;font-size:15px}
+.client-group .panel{overflow:hidden}
+@media(max-width:1200px){
+  .client-filter-grid{grid-template-columns:repeat(3,minmax(150px,1fr))}
+}
+@media(max-width:850px){
+  .client-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .client-filter.wide{grid-column:span 2}
+}
+@media(max-width:560px){
+  .client-filter-grid{grid-template-columns:1fr}
+  .client-filter.wide{grid-column:auto}
+}
