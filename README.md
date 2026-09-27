@@ -2,7 +2,7 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.9.2
+## v0.9.3
 
 - New Channel Planner page for 2.4, 5 and 6 GHz
 - Detects proven channel/block conflicts between your own APs
@@ -11,6 +11,9 @@ Self-hosted UniFi Network monitoring and safe optimization dashboard designed fo
 - 5 GHz planner tries to spread APs across distinct 80 MHz blocks, including DFS options when needed
 - 6 GHz planner flags overlapping wide blocks and can suggest reducing 320 MHz to 160 MHz when reuse or retry trends justify it
 - Safe advisory only: no undocumented radio writes are performed
+- Before / after optimization tests for Channel Planner recommendations
+- Capture the 15-minute retry baseline before a manual radio change
+- Mark the change applied, monitor for at least 60 minutes, and classify the outcome as IMPROVED, NO_CHANGE, or WORSE
 - Internet Health page with availability, outages, latency, gateway uptime and throughput history
 - Retry health uses rolling averages instead of single-sample spikes
 - Roaming Analyzer with current AP and AP-change history
