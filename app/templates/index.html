@@ -23,6 +23,7 @@
   <aside class="sidebar">
     <button class="nav active" data-page="overview">Overview</button>
     <button class="nav" data-page="wifi">Wi-Fi</button>
+    <button class="nav" data-page="channels">Channel Planner</button>
     <button class="nav" data-page="internet">Internet</button>
     <button class="nav" data-page="optimize">Auto Optimize</button>
     <button class="nav" data-page="clients">Clients</button>
@@ -100,6 +101,31 @@
       <div class="panel notice">
         Internet availability is measured by this app from your Unraid server. Gateway uptime is the UDM's device uptime, not necessarily the ISP session uptime. Throughput comes from the UDM gateway uplink statistics exposed by the UniFi Network API.
       </div>
+    </section>
+
+    <section id="channels" class="page">
+      <div class="section-head">
+        <div>
+          <h2>Channel Planner</h2>
+          <span class="muted">Analyzes your AP channel layout, retry trends and proven overlap between your own APs.</span>
+        </div>
+        <button class="secondary" onclick="loadChannelPlan()">Refresh</button>
+      </div>
+
+      <div class="panel notice">
+        Safe advisory mode: the official UniFi Network API used by this app does not expose a documented neighboring-network RF scan or a supported per-AP radio write endpoint. This planner will recommend channels, but it will not silently change AP radio settings.
+      </div>
+
+      <div class="summary-grid" id="channelSummaryCards"></div>
+
+      <div class="section-head"><h2>Current plan and recommendations</h2></div>
+      <div id="channelPlanCards" class="channel-grid"></div>
+
+      <div class="section-head"><h2>Detected own-AP conflicts</h2></div>
+      <div id="channelConflicts"></div>
+
+      <div class="section-head"><h2>Planner notes</h2></div>
+      <div id="channelNotes" class="panel notice"></div>
     </section>
 
     <section id="wifi" class="page">
