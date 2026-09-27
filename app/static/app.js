@@ -6,7 +6,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById(btn.dataset.page).classList.add("active");
-    if(btn.dataset.page==="history") loadHistory();
+    if(btn.dataset.page==="history") loadHistory();\n    if(btn.dataset.page==="roaming") loadRoaming();
   });
 });
 
@@ -39,7 +39,7 @@ async function loadReport(){
     document.getElementById("autoSummary").textContent=d.autoOptimizeEnabled?"ON":"OFF";
     document.getElementById("autoSummary").className=d.autoOptimizeEnabled?"good":"warn";
     document.getElementById("autoToggle").checked=d.autoOptimizeEnabled;
-    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();
+    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();renderRoamingSummary(d.roaming||[]);
   }catch(e){
     document.getElementById("controllerPill").textContent="Controller error";
     document.getElementById("controllerPill").className="pill bad";
@@ -134,3 +134,32 @@ async function loadHistory(){
   (d.items||[]).forEach(x=>t.insertAdjacentHTML("beforeend",`<tr><td>${esc(new Date(x.ts).toLocaleString())}</td><td>${esc(x.action)}</td><td>${esc(x.target)}</td><td>${esc(x.detail)}</td><td><span class="status-tag ${esc(x.result)}">${esc(x.result)}</span></td></tr>`));
 }
 loadReport();setInterval(loadReport,60000);
+
+
+function renderRoamingSummary(items){
+  const box=document.getElementById("roamingSummaryCards"); if(!box)return;
+  const total=items.length;
+  const active=items.filter(x=>x.roamCount24h>0).length;
+  const frequent=items.filter(x=>x.status==="FREQUENT_ROAMING").length;
+  const stable=items.filter(x=>x.status==="STABLE").length;
+  box.innerHTML=
+    `<div class="summary-card"><h3>Wireless clients tracked</h3><div class="big">${total}</div></div>`+
+    `<div class="summary-card"><h3>Roamed in 24h</h3><div class="big">${active}</div></div>`+
+    `<div class="summary-card"><h3>Stable</h3><div class="big good">${stable}</div></div>`+
+    `<div class="summary-card"><h3>Frequent roaming</h3><div class="big ${frequent?"warn":"good"}">${frequent}</div></div>`;
+}
+
+async function loadRoaming(){
+  const r=await fetch("/api/roaming",{cache:"no-store"}); const d=await r.json();
+  if(!d.ok)return;
+  renderRoamingSummary(d.clients||[]);
+  const ct=document.getElementById("roamingClientTable"); ct.innerHTML="";
+  (d.clients||[]).forEach(x=>{
+    const cls=x.status==="FREQUENT_ROAMING"?"NEEDS_ATTENTION":x.status==="STABLE"?"ALREADY_OPTIMIZED":"PROTECTED";
+    ct.insertAdjacentHTML("beforeend",
+      `<tr><td>${esc(x.name)}</td><td>${esc(x.currentApName)}</td><td>${esc(x.roamCount24h)}</td><td>${x.lastRoam?esc(new Date(x.lastRoam.ts).toLocaleString()):"—"}</td><td><span class="status-tag ${cls}">${esc(x.status)}</span></td></tr>`);
+  });
+  const et=document.getElementById("roamEventTable"); et.innerHTML="";
+  (d.events||[]).forEach(x=>et.insertAdjacentHTML("beforeend",
+    `<tr><td>${esc(new Date(x.ts).toLocaleString())}</td><td>${esc(x.name)}</td><td>${esc(x.from_ap_name)}</td><td>${esc(x.to_ap_name)}</td></tr>`));
+}
