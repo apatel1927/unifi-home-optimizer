@@ -30,6 +30,7 @@
     <button class="nav" data-page="roaming">Roaming</button>
     <button class="nav" data-page="switches">Switches</button>
     <button class="nav" data-page="history">History</button>
+    <button class="nav" data-page="system">System</button>
   </aside>
 
   <main>
@@ -189,6 +190,47 @@
     <section id="switches" class="page">
       <div class="section-head"><h2>Switch ports</h2><span class="muted">Negotiated link speed is informational unless the endpoint is expected to be faster.</span></div>
       <div id="switchContainer"></div>
+    </section>
+
+    <section id="system" class="page">
+      <div class="section-head">
+        <div>
+          <h2>System & Diagnostics</h2>
+          <span class="muted">Optimizer health, storage, polling and automation readiness.</span>
+        </div>
+        <button class="secondary" onclick="loadSystem()">Refresh</button>
+      </div>
+
+      <div class="summary-grid">
+        <div class="summary-card"><h3>App version</h3><div id="sysVersion" class="big">—</div></div>
+        <div class="summary-card"><h3>Monitor</h3><div id="sysMonitor" class="big">—</div><div id="sysMonitorDetail" class="muted"></div></div>
+        <div class="summary-card"><h3>Controller</h3><div id="sysController" class="big">—</div><div id="sysControllerDetail" class="muted"></div></div>
+        <div class="summary-card"><h3>Database</h3><div id="sysDbSize" class="big">—</div><div id="sysDbRows" class="muted"></div></div>
+      </div>
+
+      <div class="section-head"><h2>Monitoring configuration</h2></div>
+      <div class="panel system-list">
+        <div><span>Poll interval</span><b id="sysPoll">—</b></div>
+        <div><span>History retention</span><b id="sysRetention">—</b></div>
+        <div><span>Last successful controller poll</span><b id="sysLastController">—</b></div>
+        <div><span>Last monitor cycle</span><b id="sysLastCycle">—</b></div>
+        <div><span>Last monitor error</span><b id="sysLastError">—</b></div>
+      </div>
+
+      <div class="section-head"><h2>Browser alerts</h2></div>
+      <div class="panel alert-settings">
+        <div>
+          <h3>Local browser notifications</h3>
+          <p class="muted">Notify this browser about Internet outages, AP outages and completed optimization tests while the dashboard is open.</p>
+        </div>
+        <button id="notificationBtn" class="secondary">Enable browser alerts</button>
+      </div>
+
+      <div class="section-head"><h2>Experimental Auto RF</h2></div>
+      <div class="panel notice">
+        <b id="privateRfStatus">Read-only discovery not configured</b><br>
+        <span id="privateRfDetail">Private UniFi radio control stays disabled until local-controller authentication and the exact U7 radio payloads are verified. The safe optimizer continues to run independently.</span>
+      </div>
     </section>
 
     <section id="history" class="page">
