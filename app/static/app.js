@@ -311,7 +311,7 @@ function renderChannelPlan(plan){
       box.insertAdjacentHTML("beforeend",
         '<div class="channel-card">'+
           '<div class="channel-head"><div><h3>'+esc(x.apName)+'</h3><span class="muted">'+esc(x.band)+' GHz · '+esc(x.model)+'</span></div>'+
-          '<span class="status-tag '+(x.status==="KEEP"?"ALREADY_OPTIMIZED":"NEEDS_ATTENTION")+'">'+esc(x.status)+'</span></div>'+
+          '<span class="status-tag '+(x.status==="KEEP"?"ALREADY_OPTIMIZED":x.status==="INVESTIGATE"?"PROTECTED":"NEEDS_ATTENTION")+'">'+esc(x.status)+'</span></div>'+
           '<div class="channel-metrics">'+
             '<div><span>Current</span><b>'+esc(current)+'</b></div>'+
             '<div><span>Recommended</span><b>'+esc(rec)+'</b></div>'+
@@ -319,7 +319,7 @@ function renderChannelPlan(plan){
             '<div><span>Retries</span><b class="'+retryClass(x.retryPct)+'">'+esc(retry)+'</b><small>'+esc(x.retryBasis||"")+'</small></div>'+
           '</div>'+
           '<ul class="channel-actions">'+actions+'</ul>'+
-          (x.status==="CONSIDER_CHANGE"?'<div class="channel-test-action"><button class="start-test-btn" data-test-index="'+items.indexOf(x)+'">Create before/after test</button></div>':'')+
+          (x.testableChange?'<div class="channel-test-action"><button class="start-test-btn" data-test-index="'+items.indexOf(x)+'">Create '+esc(x.band)+' GHz A/B/A test</button></div>':(x.status==="INVESTIGATE"?'<div class="channel-test-action"><span class="muted">Monitoring only — no channel/width change is proposed, so an A/B/A test is not applicable.</span></div>':''))+
         '</div>');
     });
   }
@@ -369,6 +369,11 @@ async function startOptimizationTest(index){
   const plan=window.channelPlanData||{};
   const x=(plan.items||[])[index];
   if(!x)return;
+  const actualChange=(x.recommendedChannel!==x.channel || x.recommendedWidthMHz!==x.widthMHz);
+  if(!x.testableChange || !actualChange){
+    alert("No channel or width change is proposed for this radio. This item should be monitored/investigated instead of A/B/A tested.");
+    return;
+  }
   const body={
     apId:x.apId,
     apName:x.apName,
@@ -383,7 +388,11 @@ async function startOptimizationTest(index){
     body:JSON.stringify(body)
   });
   const d=await r.json();
-  if(d.ok)await loadOptimizationTests();
+  if(d.ok){
+    await loadOptimizationTests();
+  }else{
+    alert(d.error||"Unable to create RF test.");
+  }
 }
 
 document.addEventListener("click",e=>{
@@ -395,7 +404,8 @@ function testStatusClass(status){
   if(["IMPROVED","IMPROVED_CONFIRMED"].includes(status))return "ALREADY_OPTIMIZED";
   if(["WORSE","WORSE_CONFIRMED"].includes(status))return "FAILED";
   if(["MONITORING","ROLLBACK_MONITORING","ROLLBACK_REQUIRED"].includes(status))return "PROTECTED";
-  if(["NO_CHANGE","NO_MEANINGFUL_CHANGE","INCONCLUSIVE","INCONCLUSIVE_LOAD_CHANGED","INCONCLUSIVE_ENVIRONMENT_CHANGED"].includes(status))return "NEEDS_ATTENTION";
+  if(["NO_CHANGE","NO_MEANINGFUL_CHANGE","INCONCLUSIVE","INCONCLUSIVE_LOAD_CHANGED","INCONCLUSIVE_ENVIRONMENT_CHANGED","INVALID_NO_CHANGE"].includes(status))return "NEEDS_ATTENTION";
+  if(status==="CANCELLED")return "SKIPPED";
   return "PROTECTED";
 }
 function fmtRetry(v){return v==null?"—":Number(v).toFixed(1)+"%"}
@@ -444,11 +454,11 @@ function renderOptimizationTests(items){
     if(t.status==="PROPOSED"){
       controls='<button class="mark-applied-btn" data-id="'+t.id+'">I made this change</button> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel</button>';
     }else if(t.status==="MONITORING"){
-      controls='<span class="muted">A/B/A monitoring is automatic.</span>';
+      controls='<span class="muted">A/B/A monitoring is automatic.</span> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel test</button>';
     }else if(t.status==="ROLLBACK_REQUIRED"){
-      controls='<span class="muted">Restore original '+esc(original)+'. The optimizer will detect it automatically.</span>';
+      controls='<span class="muted">Restore original '+esc(original)+'. The optimizer will detect it automatically.</span> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel test</button>';
     }else if(t.status==="ROLLBACK_MONITORING"){
-      controls='<span class="muted">Rollback verification is running automatically.</span>';
+      controls='<span class="muted">Rollback verification is running automatically.</span> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel test</button>';
     }
 
     if(pt){
@@ -497,8 +507,10 @@ document.addEventListener("click",async e=>{
   }
   const cancel=e.target.closest(".cancel-test-btn");
   if(cancel){
+    if(!confirm("Cancel this RF test? The collected history will remain, but the test will stop monitoring."))return;
     await fetch("/api/optimization-tests/"+cancel.dataset.id+"/cancel",{method:"POST"});
     await loadOptimizationTests();
+    await loadChannelPlan();
   }
 });
 
