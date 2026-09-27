@@ -457,3 +457,18 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 .rf-inline select{min-width:240px}
 .rf-result{margin:14px 0 0}
 @media(max-width:900px){.private-rf-steps{grid-template-columns:1fr}}
+
+
+/* v0.12.1 topology-aware RF scoring */
+.topology-result{
+  margin-top:12px;
+  padding:12px 14px;
+  border-radius:10px;
+  border:1px solid rgba(79,140,255,.18);
+  background:rgba(79,140,255,.07);
+}
+.topology-result span,.topology-result small{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}
+.topology-result b{display:block;margin:4px 0;font-size:18px;color:#eef5ff}
+.topology-result small{text-transform:none}
+.status-tag.IMPROVED_TOPOLOGY{color:var(--good)}
+.status-tag.WORSE_TOPOLOGY{color:var(--bad)}
