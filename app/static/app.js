@@ -391,13 +391,38 @@ document.addEventListener("click",e=>{
 });
 
 function testStatusClass(status){
-  if(status==="IMPROVED")return "ALREADY_OPTIMIZED";
-  if(status==="WORSE")return "FAILED";
-  if(status==="MONITORING")return "PROTECTED";
-  if(status==="NO_CHANGE")return "NEEDS_ATTENTION";
+  if(["IMPROVED","IMPROVED_CONFIRMED"].includes(status))return "ALREADY_OPTIMIZED";
+  if(["WORSE","WORSE_CONFIRMED"].includes(status))return "FAILED";
+  if(["MONITORING","ROLLBACK_MONITORING","ROLLBACK_REQUIRED"].includes(status))return "PROTECTED";
+  if(["NO_CHANGE","NO_MEANINGFUL_CHANGE","INCONCLUSIVE","INCONCLUSIVE_LOAD_CHANGED","INCONCLUSIVE_ENVIRONMENT_CHANGED"].includes(status))return "NEEDS_ATTENTION";
   return "PROTECTED";
 }
 function fmtRetry(v){return v==null?"—":Number(v).toFixed(1)+"%"}
+function fmtClients(v){return v==null?"—":Number(v).toFixed(1)}
+
+function phaseTiming(t){
+  if(t.status==="PROPOSED"){
+    return {label:"Waiting for new setting",detail:"Auto-detect enabled",pct:0};
+  }
+  if(t.status==="MONITORING" && t.applied_at){
+    const elapsed=Math.max(0,(Date.now()-new Date(t.applied_at).getTime())/60000);
+    if(elapsed<15){
+      return {label:"Settling after new setting",detail:Math.floor(elapsed)+"m elapsed · "+Math.ceil(15-elapsed)+"m settling remaining",pct:(elapsed/75)*100};
+    }
+    return {label:"Observing new setting",detail:Math.floor(elapsed)+"m elapsed · "+Math.max(0,Math.ceil(75-elapsed))+"m until rollback decision",pct:(elapsed/75)*100};
+  }
+  if(t.status==="ROLLBACK_REQUIRED"){
+    return {label:"Rollback verification required",detail:"Restore the original radio settings; detection is automatic.",pct:100};
+  }
+  if(t.status==="ROLLBACK_MONITORING" && t.rollback_started_at){
+    const elapsed=Math.max(0,(Date.now()-new Date(t.rollback_started_at).getTime())/60000);
+    if(elapsed<15){
+      return {label:"Settling after rollback",detail:Math.floor(elapsed)+"m elapsed · "+Math.ceil(15-elapsed)+"m settling remaining",pct:(elapsed/75)*100};
+    }
+    return {label:"Verifying original setting",detail:Math.floor(elapsed)+"m elapsed · "+Math.max(0,Math.ceil(75-elapsed))+"m until final A/B/A result",pct:(elapsed/75)*100};
+  }
+  return null;
+}
 
 function renderOptimizationTests(items){
   const box=document.getElementById("optimizationTests");
@@ -409,29 +434,45 @@ function renderOptimizationTests(items){
   box.innerHTML="";
   items.forEach(t=>{
     const proposed=(t.proposed_channel==null?"—":t.proposed_channel)+" / "+(t.proposed_width_mhz==null?"—":t.proposed_width_mhz+" MHz");
+    const original=(t.original_channel==null?"—":t.original_channel)+" / "+(t.original_width_mhz==null?"—":t.original_width_mhz+" MHz");
+    const baseline60=t.baseline_retry_60!=null?t.baseline_retry_60:t.baseline_retry;
     let controls="";
     let timing="";
+    const pt=phaseTiming(t);
+
     if(t.status==="PROPOSED"){
       controls='<button class="mark-applied-btn" data-id="'+t.id+'">I made this change</button> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel</button>';
-      timing='<div class="test-timing"><span>Waiting for change</span><b>Auto-detect enabled</b></div>';
     }else if(t.status==="MONITORING"){
-      const tm=humanElapsed(t.applied_at);
-      controls='<span class="muted">Monitoring automatically…</span>';
-      timing='<div class="test-timing"><span>Started '+esc(fmtDateTime(t.applied_at))+'</span><b>'+esc(tm.elapsed)+' elapsed · '+esc(tm.remaining)+' remaining</b><div class="progress-track"><div class="progress-fill" style="width:'+Math.min(100,Math.max(0,((Date.now()-new Date(t.applied_at).getTime())/3600000)*100))+'%"></div></div></div>';
+      controls='<span class="muted">A/B/A monitoring is automatic.</span>';
+    }else if(t.status==="ROLLBACK_REQUIRED"){
+      controls='<span class="muted">Restore original '+esc(original)+'. The optimizer will detect it automatically.</span>';
+    }else if(t.status==="ROLLBACK_MONITORING"){
+      controls='<span class="muted">Rollback verification is running automatically.</span>';
+    }
+
+    if(pt){
+      timing='<div class="test-timing"><span>'+esc(pt.label)+'</span><b>'+esc(pt.detail)+'</b><div class="progress-track"><div class="progress-fill" style="width:'+Math.min(100,Math.max(0,pt.pct))+'%"></div></div></div>';
     }else if(t.completed_at){
       timing='<div class="test-timing"><span>Completed '+esc(fmtDateTime(t.completed_at))+'</span><b>'+esc(t.result||t.status)+'</b></div>';
     }
-    const delta=(t.baseline_retry!=null&&t.last_retry!=null)?(Number(t.last_retry)-Number(t.baseline_retry)):null;
-    const deltaText=delta==null?"—":(delta>0?"+":"")+delta.toFixed(1)+" pts";
+
+    const postDelta=(baseline60!=null&&t.post_retry_avg!=null)?Number(t.post_retry_avg)-Number(baseline60):null;
+    const rollbackDelta=(baseline60!=null&&t.rollback_retry_avg!=null)?Number(t.rollback_retry_avg)-Number(baseline60):null;
+
     box.insertAdjacentHTML("beforeend",
       '<div class="test-card">'+
-        '<div class="channel-head"><div><h3>'+esc(t.ap_name)+'</h3><span class="muted">'+esc(t.band)+' GHz optimization test</span></div>'+
+        '<div class="channel-head"><div><h3>'+esc(t.ap_name)+'</h3><span class="muted">'+esc(t.band)+' GHz A/B/A RF test</span></div>'+
         '<span class="status-tag '+testStatusClass(t.status)+'">'+esc(t.status)+'</span></div>'+
+        '<div class="aba-strip">'+
+          '<div><span>A · Original</span><b>'+esc(original)+'</b><small>'+esc(fmtRetry(baseline60))+' · '+esc(fmtClients(t.baseline_client_count))+' clients</small></div>'+
+          '<div><span>B · New</span><b>'+esc(proposed)+'</b><small>'+esc(fmtRetry(t.post_retry_avg))+(postDelta==null?"":" · "+(postDelta>0?"+":"")+postDelta.toFixed(1)+" pts")+'</small></div>'+
+          '<div><span>A · Rollback</span><b>'+esc(original)+'</b><small>'+esc(fmtRetry(t.rollback_retry_avg))+(rollbackDelta==null?"":" · "+(rollbackDelta>0?"+":"")+rollbackDelta.toFixed(1)+" pts")+'</small></div>'+
+        '</div>'+
         '<div class="channel-metrics">'+
-          '<div><span>Proposed</span><b>'+esc(proposed)+'</b></div>'+
-          '<div><span>Baseline retries</span><b>'+esc(fmtRetry(t.baseline_retry))+'</b><small>'+esc(t.baseline_basis||"")+'</small></div>'+
-          '<div><span>Latest retries</span><b>'+esc(fmtRetry(t.last_retry))+'</b></div>'+
-          '<div><span>Change</span><b class="'+(delta==null?"":delta<0?"good":delta>0?"warn":"")+'">'+esc(deltaText)+'</b></div>'+
+          '<div><span>Baseline samples</span><b>'+esc(t.baseline_sample_count??"—")+'</b></div>'+
+          '<div><span>New-setting samples</span><b>'+esc(t.post_sample_count??"—")+'</b></div>'+
+          '<div><span>Rollback samples</span><b>'+esc(t.rollback_sample_count??"—")+'</b></div>'+
+          '<div><span>Preliminary</span><b>'+esc(t.preliminary_result||"—")+'</b></div>'+
         '</div>'+
         '<div class="test-description">'+esc(t.description||"")+'</div>'+
         timing+
@@ -495,7 +536,7 @@ function processAlerts(d){
   for(const t of (d.optimizationTests||[])){
     const old=previousAlertState.testResults.get(t.id);
     const cur=t.result||t.status;
-    if(old && old!==cur && ["IMPROVED","NO_CHANGE","WORSE"].includes(cur)){
+    if(old && old!==cur && ["IMPROVED_CONFIRMED","WORSE_CONFIRMED","NO_MEANINGFUL_CHANGE","INCONCLUSIVE","INCONCLUSIVE_LOAD_CHANGED","INCONCLUSIVE_ENVIRONMENT_CHANGED"].includes(cur)){
       maybeNotify("Wi-Fi optimization test complete",t.ap_name+" "+t.band+" GHz: "+cur);
     }
     previousAlertState.testResults.set(t.id,cur);
