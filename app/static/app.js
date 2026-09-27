@@ -1,3 +1,4 @@
+let previousAlertState={internet:null,offlineAps:new Set(),testResults:new Map()};
 let report=null;
 
 document.querySelectorAll(".nav").forEach(btn=>{
@@ -59,6 +60,7 @@ async function loadReport(){
     const d=await r.json();
     if(!d.ok)throw new Error(d.error||"API error");
     report=d;
+    processAlerts(d);
     document.getElementById("controllerPill").textContent="Controller connected";
     document.getElementById("controllerPill").className="pill good";
     document.getElementById("lastChecked").textContent="Last checked "+fmtTime(d.lastChecked);
@@ -420,3 +422,93 @@ setInterval(()=>{
     renderOptimizationTests(report.optimizationTests||[]);
   }
 },30000);
+
+
+function notificationsEnabled(){
+  return localStorage.getItem("uho.notifications")==="1" && "Notification" in window && Notification.permission==="granted";
+}
+function maybeNotify(title,body){
+  if(!notificationsEnabled())return;
+  try{new Notification(title,{body,icon:"/static/icon.svg"})}catch{}
+}
+function processAlerts(d){
+  const inet=d.internet?.latest;
+  if(inet){
+    const online=!!inet.online;
+    if(previousAlertState.internet!==null && previousAlertState.internet!==online){
+      maybeNotify(online?"Internet restored":"Internet outage detected",online?"Connectivity probe is responding again.":"The optimizer cannot reach the Internet from Unraid.");
+    }
+    previousAlertState.internet=online;
+  }
+
+  const nowOffline=new Set((d.accessPoints||[]).filter(x=>x.state!=="ONLINE").map(x=>x.id));
+  for(const ap of (d.accessPoints||[])){
+    if(ap.state!=="ONLINE" && !previousAlertState.offlineAps.has(ap.id)){
+      maybeNotify("Access point offline",ap.name+" is not reporting ONLINE.");
+    }
+  }
+  previousAlertState.offlineAps=nowOffline;
+
+  for(const t of (d.optimizationTests||[])){
+    const old=previousAlertState.testResults.get(t.id);
+    const cur=t.result||t.status;
+    if(old && old!==cur && ["IMPROVED","NO_CHANGE","WORSE"].includes(cur)){
+      maybeNotify("Wi-Fi optimization test complete",t.ap_name+" "+t.band+" GHz: "+cur);
+    }
+    previousAlertState.testResults.set(t.id,cur);
+  }
+}
+
+async function loadSystem(){
+  const r=await fetch("/api/system",{cache:"no-store"});
+  const d=await r.json();
+  if(!d.ok)return;
+  const set=(id,val,cls)=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    el.textContent=val;
+    if(cls)el.className="big "+cls;
+  };
+  set("sysVersion","v"+d.version,"");
+  set("sysMonitor",d.monitorStarted?"RUNNING":"STOPPED",d.monitorStarted?"good":"bad");
+  document.getElementById("sysMonitorDetail").textContent=d.lastMonitorError?"Last error: "+d.lastMonitorError:"Background monitor active";
+  set("sysController",d.lastControllerSuccess?"CONNECTED":"WAITING",d.lastControllerSuccess?"good":"warn");
+  document.getElementById("sysControllerDetail").textContent=d.controller||"—";
+  set("sysDbSize",bytes(d.database?.sizeBytes),"");
+  const counts=d.database?.rowCounts||{};
+  document.getElementById("sysDbRows").textContent=Object.entries(counts).map(([k,v])=>k+": "+(v??"—")).join(" · ");
+  document.getElementById("sysPoll").textContent=(d.pollIntervalSeconds??"—")+" seconds";
+  document.getElementById("sysRetention").textContent=(d.retentionDays??"—")+" days";
+  document.getElementById("sysLastController").textContent=fmtDateTime(d.lastControllerSuccess);
+  document.getElementById("sysLastCycle").textContent=fmtDateTime(d.lastMonitorCycle);
+  document.getElementById("sysLastError").textContent=d.lastMonitorError||"None";
+  document.getElementById("privateRfStatus").textContent=d.privateRf?.status==="NOT_CONFIGURED"?"Read-only discovery not configured":d.privateRf?.status||"—";
+  document.getElementById("privateRfDetail").textContent=d.privateRf?.detail||"—";
+  updateNotificationButton();
+}
+
+function updateNotificationButton(){
+  const btn=document.getElementById("notificationBtn");
+  if(!btn)return;
+  if(!("Notification" in window)){
+    btn.textContent="Notifications unavailable";
+    btn.disabled=true;
+    return;
+  }
+  const enabled=notificationsEnabled();
+  btn.textContent=enabled?"Browser alerts enabled":"Enable browser alerts";
+  btn.className=enabled?"":"secondary";
+}
+
+document.addEventListener("click",async e=>{
+  if(e.target.id!=="notificationBtn")return;
+  if(!("Notification" in window))return;
+  const permission=await Notification.requestPermission();
+  if(permission==="granted"){
+    localStorage.setItem("uho.notifications","1");
+    maybeNotify("UniFi Home Optimizer","Browser alerts are now enabled.");
+  }else{
+    localStorage.setItem("uho.notifications","0");
+  }
+  updateNotificationButton();
+});
