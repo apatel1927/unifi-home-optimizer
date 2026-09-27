@@ -63,6 +63,15 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_roam_events_client_ts
             ON roam_events(client_id, ts);
         """)
+        # Lightweight schema migrations for databases created by older releases.
+        ap_cols = {row[1] for row in c.execute("PRAGMA table_info(ap_history)").fetchall()}
+        if "retry_24" not in ap_cols:
+            c.execute("ALTER TABLE ap_history ADD COLUMN retry_24 REAL")
+        if "retry_5" not in ap_cols:
+            c.execute("ALTER TABLE ap_history ADD COLUMN retry_5 REAL")
+        if "retry_6" not in ap_cols:
+            c.execute("ALTER TABLE ap_history ADD COLUMN retry_6 REAL")
+
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_optimize_enabled','0')")
         c.commit()
         c.close()
