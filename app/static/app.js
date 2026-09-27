@@ -281,6 +281,7 @@ function renderChannelPlan(plan){
             '<div><span>Retries</span><b class="'+retryClass(x.retryPct)+'">'+esc(retry)+'</b><small>'+esc(x.retryBasis||"")+'</small></div>'+
           '</div>'+
           '<ul class="channel-actions">'+actions+'</ul>'+
+          (x.status==="CONSIDER_CHANGE"?'<div class="channel-test-action"><button class="start-test-btn" data-test-index="'+items.indexOf(x)+'">Create before/after test</button></div>':'')+
         '</div>');
     });
   }
