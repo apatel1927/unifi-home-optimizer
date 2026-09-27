@@ -23,6 +23,7 @@
   <aside class="sidebar">
     <button class="nav active" data-page="overview">Overview</button>
     <button class="nav" data-page="wifi">Wi-Fi</button>
+    <button class="nav" data-page="internet">Internet</button>
     <button class="nav" data-page="optimize">Auto Optimize</button>
     <button class="nav" data-page="clients">Clients</button>
     <button class="nav" data-page="roaming">Roaming</button>
@@ -42,6 +43,7 @@
           <div><span>Devices</span><b id="deviceCount">—</b></div>
           <div><span>Clients</span><b id="clientCount">—</b></div>
           <div><span>APs</span><b id="apCount">—</b></div>
+          <div><span>Internet</span><b id="internetSummary">—</b></div>
           <div><span>Auto Optimize</span><b id="autoSummary">—</b></div>
         </div>
       </div>
@@ -61,6 +63,42 @@
           <div class="section-head"><h2>Wired observations</h2></div>
           <div id="wiredFindings"></div>
         </div>
+      </div>
+    </section>
+
+    <section id="internet" class="page">
+      <div class="section-head">
+        <div><h2>Internet Health</h2><span class="muted">Observed connectivity from the Unraid server plus gateway uplink statistics reported by UniFi.</span></div>
+        <button class="secondary" onclick="loadInternet()">Refresh</button>
+      </div>
+
+      <div class="summary-grid">
+        <div class="summary-card"><h3>Status</h3><div id="internetStatus" class="big">—</div><div class="muted">External connectivity probe</div></div>
+        <div class="summary-card"><h3>24h availability</h3><div id="internetAvailability" class="big">—</div><div class="muted">Observed samples</div></div>
+        <div class="summary-card"><h3>Observed up time</h3><div id="internetUpFor" class="big">—</div><div class="muted">Since last observed outage</div></div>
+        <div class="summary-card"><h3>Gateway uptime</h3><div id="gatewayUptime" class="big">—</div><div class="muted">UDM uptime reported by UniFi</div></div>
+        <div class="summary-card"><h3>Download</h3><div id="internetDownload" class="big">—</div><div class="muted">Current gateway RX rate</div></div>
+        <div class="summary-card"><h3>Upload</h3><div id="internetUpload" class="big">—</div><div class="muted">Current gateway TX rate</div></div>
+        <div class="summary-card"><h3>Latency</h3><div id="internetLatency" class="big">—</div><div class="muted">HTTPS probe latency</div></div>
+        <div class="summary-card"><h3>Outages</h3><div id="internetOutages" class="big">—</div><div class="muted">Observed in last 24 hours</div></div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="panel chart-panel">
+          <div class="chart-title"><h3>Gateway throughput</h3><span class="muted">Recent RX / TX reported by UniFi</span></div>
+          <svg id="throughputChart" class="spark-chart" viewBox="0 0 800 220" preserveAspectRatio="none"></svg>
+          <div class="chart-legend"><span>RX / Download</span><span>TX / Upload</span></div>
+        </div>
+        <div class="panel chart-panel">
+          <div class="chart-title"><h3>Internet latency</h3><span class="muted">Recent HTTPS connectivity probes</span></div>
+          <svg id="latencyChart" class="spark-chart" viewBox="0 0 800 220" preserveAspectRatio="none"></svg>
+          <div id="latencySummary" class="chart-legend"></div>
+        </div>
+      </div>
+
+      <div class="section-head"><h2>Internet monitoring notes</h2></div>
+      <div class="panel notice">
+        Internet availability is measured by this app from your Unraid server. Gateway uptime is the UDM's device uptime, not necessarily the ISP session uptime. Throughput comes from the UDM gateway uplink statistics exposed by the UniFi Network API.
       </div>
     </section>
 
