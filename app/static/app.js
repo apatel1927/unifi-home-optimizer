@@ -184,3 +184,62 @@ async function loadRoaming(){
   (d.events||[]).forEach(x=>et.insertAdjacentHTML("beforeend",
     `<tr><td>${esc(new Date(x.ts).toLocaleString())}</td><td>${esc(x.name)}</td><td>${esc(x.from_ap_name)}</td><td>${esc(x.to_ap_name)}</td></tr>`));
 }
+
+
+function svgLine(values,maxValue,klass){
+  const points=values.map((v,i)=>{
+    if(v==null)return null;
+    const x=values.length<=1?0:(i/(values.length-1))*800;
+    const y=210-(Math.max(0,v)/(maxValue||1))*190;
+    return [x,y];
+  });
+  let d="",pen=false;
+  for(const p of points){
+    if(!p){pen=false;continue}
+    d+=(pen?" L ":"M ")+p[0].toFixed(1)+" "+p[1].toFixed(1);
+    pen=true;
+  }
+  return d?'<path class="'+klass+'" d="'+d+'" fill="none" vector-effect="non-scaling-stroke"/>':"";
+}
+function chartGrid(){
+  return '<path class="chart-grid-line" d="M0 20H800 M0 67.5H800 M0 115H800 M0 162.5H800 M0 210H800" vector-effect="non-scaling-stroke"/>';
+}
+function renderInternet(inet,gateway){
+  if(!inet)return;
+  const latest=inet.latest||{};
+  const stats=gateway?.statistics||{};
+  const uplink=stats.uplink||{};
+  const set=(id,val,cls)=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    el.textContent=val;
+    if(cls)el.className="big "+cls;
+  };
+  set("internetStatus",inet.latest?(latest.online?"ONLINE":"OFFLINE"):"LEARNING",inet.latest?(latest.online?"good":"bad"):"info");
+  set("internetAvailability",inet.availabilityPct==null?"—":inet.availabilityPct.toFixed(2)+"%",inet.availabilityPct!=null&&inet.availabilityPct>=99?"good":inet.availabilityPct!=null&&inet.availabilityPct>=95?"warn":"bad");
+  set("internetUpFor",sinceDuration(inet.onlineSince),"");
+  set("gatewayUptime",duration(stats.uptimeSec),"");
+  set("internetDownload",rateMbps(latest.rx_bps??uplink.rxRateBps),"");
+  set("internetUpload",rateMbps(latest.tx_bps??uplink.txRateBps),"");
+  set("internetLatency",latest.latency_ms==null?"—":latest.latency_ms.toFixed(0)+" ms",latest.latency_ms!=null&&latest.latency_ms<50?"good":latest.latency_ms!=null&&latest.latency_ms<100?"warn":"bad");
+  set("internetOutages",String(inet.outageCount??0),(inet.outageCount||0)===0?"good":"warn");
+
+  const samples=inet.samples||[];
+  const rx=samples.map(x=>typeof x.rx_bps==="number"?x.rx_bps/1000000:null);
+  const tx=samples.map(x=>typeof x.tx_bps==="number"?x.tx_bps/1000000:null);
+  const maxT=Math.max(1,...rx.filter(Number.isFinite),...tx.filter(Number.isFinite));
+  const tc=document.getElementById("throughputChart");
+  if(tc)tc.innerHTML=chartGrid()+svgLine(rx,maxT,"chart-line-rx")+svgLine(tx,maxT,"chart-line-tx");
+
+  const lat=samples.map(x=>x.online&&typeof x.latency_ms==="number"?x.latency_ms:null);
+  const maxL=Math.max(50,...lat.filter(Number.isFinite));
+  const lc=document.getElementById("latencyChart");
+  if(lc)lc.innerHTML=chartGrid()+svgLine(lat,maxL,"chart-line-latency");
+  const ls=document.getElementById("latencySummary");
+  if(ls)ls.innerHTML="<span>24h avg: "+(inet.avgLatencyMs==null?"—":inet.avgLatencyMs.toFixed(0)+" ms")+"</span><span>24h peak: "+(inet.maxLatencyMs==null?"—":inet.maxLatencyMs.toFixed(0)+" ms")+"</span>";
+}
+async function loadInternet(){
+  const r=await fetch("/api/internet",{cache:"no-store"});
+  const d=await r.json();
+  if(d.ok)renderInternet(d,report?.gateway);
+}
