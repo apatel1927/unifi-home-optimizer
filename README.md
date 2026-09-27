@@ -2,8 +2,16 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.10.0
+## v0.11.0
 
+- A/B/A RF verification for channel and width changes
+- Captures a 60-minute original-setting baseline before a test
+- Ignores the first 15 minutes after a change as a settling period
+- Measures the new setting across a 60-minute observation window
+- Requires rollback to the original setting and verifies it with another settling + 60-minute observation window
+- Uses sample counts and AP client load to avoid false conclusions when traffic/load changes materially
+- Final verdicts distinguish IMPROVED_CONFIRMED, WORSE_CONFIRMED, NO_MEANINGFUL_CHANGE, and INCONCLUSIVE conditions
+- Coordinated RF target plan shows the intended end-state across all APs before individual changes
 - Modernized dashboard visual design with improved navigation, cards, tables, responsiveness and status hierarchy
 - Automatic detection of manual radio changes for active before/after tests
 - Live elapsed / remaining test timer with progress bar
@@ -21,8 +29,8 @@ Self-hosted UniFi Network monitoring and safe optimization dashboard designed fo
 - 6 GHz planner flags overlapping wide blocks and can suggest reducing 320 MHz to 160 MHz when reuse or retry trends justify it
 - Safe advisory only: no undocumented radio writes are performed
 - Before / after optimization tests for Channel Planner recommendations
-- Capture the 15-minute retry baseline before a manual radio change
-- Mark the change applied, monitor for at least 60 minutes, and classify the outcome as IMPROVED, NO_CHANGE, or WORSE
+- New tests use a 60-minute baseline plus A/B/A rollback verification instead of a single 15-minute comparison
+- Manual radio changes and rollbacks are auto-detected from the live UniFi configuration when possible
 - Internet Health page with availability, outages, latency, gateway uptime and throughput history
 - Retry health uses rolling averages instead of single-sample spikes
 - Roaming Analyzer with current AP and AP-change history
