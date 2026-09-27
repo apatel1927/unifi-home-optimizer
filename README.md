@@ -2,8 +2,9 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.9.3
+## v0.9.4
 
+- Modernized dashboard visual design with improved navigation, cards, tables, responsiveness and status hierarchy
 - New Channel Planner page for 2.4, 5 and 6 GHz
 - Detects proven channel/block conflicts between your own APs
 - Uses current radio settings, client load and retry trends to recommend KEEP or CONSIDER CHANGE
