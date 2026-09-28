@@ -2,8 +2,11 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.20.1
+## v0.20.2
 
+- AI defer messages now remain visible instead of flashing away
+- When an RF A/B/A test blocks AI analysis, the Export / AI page shows the exact AP, band and test status causing the deferral
+- Fixes a short AI launch-state race so the button remains in STARTING/RUNNING state from click through completion
 - AI advisor now receives current Auto RF / Auto Optimize state and full stored RF test history
 - Prevents the advisor from treating official-API radio-write limitations as proof that validated private Auto RF is unavailable
 - Uses completed RF A/B/A history as stronger evidence than generic planner recommendations and avoids casually repeating previously worse tests
