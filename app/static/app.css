@@ -761,3 +761,67 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 @media(max-width:900px){
   .wired-port-table-panel{overflow-x:auto}
 }
+
+
+/* v0.20.0 export + AI advisor */
+.export-ai-grid{
+  display:grid;
+  grid-template-columns:1.2fr .8fr;
+  gap:16px;
+  margin-bottom:18px;
+}
+.export-card{padding:18px}
+.export-card h3{margin:7px 0 6px;font-size:16px}
+.export-card p{margin:0;line-height:1.5}
+.export-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}
+.export-status{margin-top:12px;line-height:1.45}
+.export-included-list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.export-included-list>div{
+  padding:10px 11px;
+  border-radius:10px;
+  background:rgba(7,16,28,.62);
+  border:1px solid rgba(91,125,171,.12);
+}
+.export-included-list b,.export-included-list span{display:block}
+.export-included-list b{font-size:11px;color:#e8f0fa}
+.export-included-list span{margin-top:3px;font-size:10px;color:var(--muted);line-height:1.4}
+.ai-controls{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto minmax(180px,220px);
+  gap:18px;
+  align-items:center;
+  padding:18px;
+  margin-bottom:14px;
+}
+.ai-controls h3{margin:0 0 5px;font-size:14px}
+.ai-controls p{margin:0;line-height:1.45}
+.ai-summary-grid{margin-bottom:14px}
+.ai-output-panel{padding:0;overflow:hidden}
+.ai-output-panel pre{
+  margin:0;
+  padding:18px;
+  min-height:220px;
+  max-height:620px;
+  overflow:auto;
+  white-space:pre-wrap;
+  word-break:break-word;
+  font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;
+  color:#dce8f6;
+  background:rgba(7,15,26,.72);
+}
+#aiAdvisorNotice code{
+  padding:2px 5px;
+  border-radius:5px;
+  background:rgba(255,255,255,.05);
+  color:#d8e6fa;
+}
+@media(max-width:950px){
+  .export-ai-grid{grid-template-columns:1fr}
+  .ai-controls{grid-template-columns:1fr auto}
+  .ai-controls .speedtest-interval{grid-column:1/-1}
+}
+@media(max-width:560px){
+  .ai-controls{grid-template-columns:1fr}
+  .export-actions{flex-direction:column}
+  .export-actions button{width:100%}
+}
