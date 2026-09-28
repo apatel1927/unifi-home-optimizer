@@ -1047,12 +1047,15 @@ def evaluate_optimization_tests(snapshot=None):
     except Exception:
         return []
 
-def _rf_test_active():
+def _active_rf_tests():
     try:
         active={"PROPOSED","MONITORING","ROLLBACK_REQUIRED","ROLLBACK_MONITORING"}
-        return any(t.get("status") in active for t in db.list_optimization_tests(100))
+        return [t for t in db.list_optimization_tests(100) if t.get("status") in active]
     except Exception:
-        return False
+        return []
+
+def _rf_test_active():
+    return bool(_active_rf_tests())
 
 def _ookla_speedtest_available():
     try:
@@ -1374,9 +1377,17 @@ def ai_analyze():
     if ai_running or ai_starting:
         return jsonify({"ok":False,"error":"AI analysis is already running"}),409
     if _rf_test_active():
+        blockers=[{
+            "id":t.get("id"),
+            "apName":t.get("ap_name"),
+            "band":t.get("band"),
+            "status":t.get("status"),
+            "phase":t.get("phase")
+        } for t in _active_rf_tests()]
         return jsonify({
             "ok":False,
-            "error":"An RF A/B/A test is active. AI analysis is deferred until the network returns to a stable comparison state."
+            "error":"AI analysis is deferred while an RF A/B/A test is active so the advisor does not judge a temporary test state.",
+            "blockers":blockers
         }),409
 
     # Mark the job as starting synchronously before spawning the worker so
