@@ -84,3 +84,10 @@ class UniFiAPI:
             r = self.get(f"/sites/{site_id}/wifi/broadcasts/{item.get('id')}")
             output.append(r.get("data") if r.get("ok") and isinstance(r.get("data"), dict) else item)
         return output
+
+
+    def dpi_categories(self):
+        return self.items(self.get("/dpi/categories", {"limit": 200, "offset": 0}))
+
+    def dpi_applications(self):
+        return self.items(self.get("/dpi/applications", {"limit": 200, "offset": 0}))
