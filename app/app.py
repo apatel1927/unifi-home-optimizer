@@ -11,7 +11,7 @@ import traceback
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file, Response
 
 from .database import Database
 from .unifi_api import UniFiAPI
@@ -19,10 +19,12 @@ from .private_unifi import PrivateUniFiAPI
 from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, build_channel_plan, radio_conflict_key
 from .audit import build_network_audit
 from .wired_audit import build_wired_audit
+from .export_bundle import build_zip_bytes, build_json_bytes, compact_support_summary, sanitize
+from .ai_advisor import analyze_with_openai
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.19.1"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.20.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -30,6 +32,8 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "30"))
 UNIFI_PRIVATE_USERNAME = os.getenv("UNIFI_PRIVATE_USERNAME", "")
 UNIFI_PRIVATE_PASSWORD = os.getenv("UNIFI_PRIVATE_PASSWORD", "")
 UNIFI_SITE_NAME = os.getenv("UNIFI_SITE_NAME", "default")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
 
 api = UniFiAPI(UNIFI_URL, API_KEY)
 private_api = PrivateUniFiAPI(
@@ -65,6 +69,12 @@ wan_last_sample_monotonic = 0.0
 wan_dns_last_sample_monotonic = 0.0
 wan_last_sample_at = None
 wan_last_error = None
+ai_scheduler_started = False
+ai_scheduler_lock = threading.Lock()
+ai_analysis_lock = threading.Lock()
+ai_running = False
+ai_started_at = None
+ai_last_error = None
 
 def _wan_targets():
     gateway=urlparse(UNIFI_URL).hostname
@@ -480,6 +490,127 @@ def _wired_audit_for_snapshot(snapshot, include_events=True):
         recent_events=recent,
         counter_summary=counters,
     )
+
+def _build_support_context():
+    snap=build_snapshot(api)
+    if not snap:
+        raise RuntimeError("Unable to retrieve UniFi snapshot")
+    retry=db.ap_retry_trends(15)
+    baselines=db.ap_client_baselines(24)
+    analysis=analyze(snap,retry,baselines)
+    channel_plan=build_channel_plan(snap,retry)
+    wired=_wired_audit_for_snapshot(snap)
+    audit=build_network_audit(snap,api,wired_audit=wired)
+
+    snap_export=dict(snap)
+    snap_export["clients"]=_enrich_client_inventory(snap)
+
+    traffic=db.traffic_summary(24)
+    traffic_dpi=db.traffic_dpi_summary(24)
+    speed=db.speedtest_summary(30)
+    speed["history"]=db.speedtest_history(30,200)
+    wan=db.wan_quality_summary(24)
+
+    return {
+        "generatedAt":datetime.now(timezone.utc).isoformat(),
+        "version":VERSION,
+        "snapshot":snap_export,
+        "analysis":analysis,
+        "networkAudit":audit,
+        "wiredAudit":wired,
+        "wanQuality24h":wan,
+        "traffic24h":{
+            "usage":traffic,
+            "dpi":traffic_dpi,
+        },
+        "speedtest":speed,
+        "channelPlan":channel_plan,
+        "healthHistory24h":db.health_history(24),
+        "roaming24h":db.roaming_summary(24),
+        "recentLog":db.recent_logs(200),
+        "ai":_ai_status(include_history=False),
+    }
+
+def _ai_status(include_history=True):
+    try:
+        interval=max(1,min(24,int(float(db.get_setting("ai_interval_hours","6") or 6))))
+    except Exception:
+        interval=6
+    history=db.ai_report_history(20) if include_history else []
+    latest=history[0] if history else (db.ai_report_history(1)[0] if db.ai_report_history(1) else None)
+    return {
+        "configured":bool(OPENAI_API_KEY),
+        "model":OPENAI_MODEL,
+        "automaticEnabled":db.get_setting("ai_auto_enabled","0")=="1",
+        "intervalHours":interval,
+        "running":ai_running,
+        "startedAt":ai_started_at,
+        "lastError":ai_last_error,
+        "latest":latest,
+        "history":history,
+        "advisoryOnly":True,
+    }
+
+def run_ai_analysis(trigger="manual"):
+    global ai_running,ai_started_at,ai_last_error
+    if not OPENAI_API_KEY:
+        ai_last_error="OPENAI_API_KEY is not configured"
+        return False
+    if not ai_analysis_lock.acquire(blocking=False):
+        return False
+    ai_running=True
+    ai_started_at=datetime.now(timezone.utc).isoformat()
+    ai_last_error=None
+    try:
+        context=_build_support_context()
+        result=analyze_with_openai(OPENAI_API_KEY,OPENAI_MODEL,sanitize(context))
+        if result.get("ok"):
+            db.record_ai_report(
+                trigger,
+                result.get("model") or OPENAI_MODEL,
+                "SUCCESS",
+                summary=result.get("text"),
+            )
+            return True
+        ai_last_error=result.get("error") or "AI analysis failed"
+        db.record_ai_report(trigger,OPENAI_MODEL,"FAILED",error=ai_last_error)
+        return False
+    except Exception as e:
+        ai_last_error=str(e)
+        db.record_ai_report(trigger,OPENAI_MODEL,"FAILED",error=str(e))
+        print("AI advisor error:",e,flush=True)
+        return False
+    finally:
+        ai_running=False
+        ai_started_at=None
+        ai_analysis_lock.release()
+
+def ai_scheduler_loop():
+    time.sleep(90)
+    while True:
+        try:
+            if OPENAI_API_KEY and db.get_setting("ai_auto_enabled","0")=="1" and not ai_running:
+                interval=max(1,min(24,int(float(db.get_setting("ai_interval_hours","6") or 6))))
+                history=db.ai_report_history(1)
+                due=True
+                if history and history[0].get("ts"):
+                    dt=datetime.fromisoformat(history[0]["ts"])
+                    if dt.tzinfo is None:
+                        dt=dt.replace(tzinfo=timezone.utc)
+                    due=(datetime.now(timezone.utc)-dt).total_seconds() >= interval*3600
+                if due and not _rf_test_active():
+                    run_ai_analysis("automatic")
+        except Exception as e:
+            print("AI scheduler error:",e,flush=True)
+        time.sleep(60)
+
+def start_ai_scheduler():
+    global ai_scheduler_started
+    with ai_scheduler_lock:
+        if ai_scheduler_started:
+            return
+        ai_scheduler_started=True
+        threading.Thread(target=ai_scheduler_loop,daemon=True).start()
 
 def report_data():
     global last_controller_success
@@ -1173,6 +1304,82 @@ def start_monitor():
 def index():
     return render_template("index.html", version=VERSION)
 
+@app.route("/api/export/support-bundle.zip")
+def export_support_bundle():
+    try:
+        context=_build_support_context()
+        bundle=build_zip_bytes(context)
+        stamp=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return send_file(
+            bundle,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"unifi-optimizer-support-{stamp}.zip"
+        )
+    except Exception as e:
+        print("Export bundle error:",e,flush=True)
+        return jsonify({"ok":False,"error":str(e)}),500
+
+@app.route("/api/export/support-bundle.json")
+def export_support_json():
+    try:
+        context=_build_support_context()
+        body=build_json_bytes(context)
+        stamp=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return Response(
+            body,
+            mimetype="application/json",
+            headers={"Content-Disposition":f'attachment; filename="unifi-optimizer-support-{stamp}.json"'}
+        )
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),500
+
+@app.route("/api/export/summary")
+def export_support_summary():
+    try:
+        context=_build_support_context()
+        return Response(compact_support_summary(sanitize(context)),mimetype="text/plain")
+    except Exception as e:
+        return Response("Export summary failed: "+str(e),status=500,mimetype="text/plain")
+
+@app.route("/api/ai")
+def ai_status():
+    return jsonify({"ok":True,**_ai_status()})
+
+@app.route("/api/ai/analyze",methods=["POST"])
+def ai_analyze():
+    if not OPENAI_API_KEY:
+        return jsonify({
+            "ok":False,
+            "error":"OPENAI_API_KEY is not configured in the Unraid container."
+        }),400
+    if ai_running:
+        return jsonify({"ok":False,"error":"AI analysis is already running"}),409
+    if _rf_test_active():
+        return jsonify({
+            "ok":False,
+            "error":"An RF A/B/A test is active. AI analysis is deferred until the network returns to a stable comparison state."
+        }),409
+    threading.Thread(target=run_ai_analysis,args=("manual",),daemon=True).start()
+    return jsonify({"ok":True,"started":True})
+
+@app.route("/api/ai/settings",methods=["POST"])
+def ai_settings():
+    body=request.get_json(silent=True) or {}
+    if "automaticEnabled" in body:
+        if bool(body.get("automaticEnabled")) and not OPENAI_API_KEY:
+            return jsonify({"ok":False,"error":"Configure OPENAI_API_KEY before enabling automatic AI analysis."}),400
+        db.set_setting("ai_auto_enabled","1" if bool(body.get("automaticEnabled")) else "0")
+    if "intervalHours" in body:
+        try:
+            interval=int(body.get("intervalHours"))
+            if interval not in (1,3,6,12,24):
+                return jsonify({"ok":False,"error":"Interval must be 1, 3, 6, 12, or 24 hours"}),400
+            db.set_setting("ai_interval_hours",str(interval))
+        except Exception:
+            return jsonify({"ok":False,"error":"Invalid AI interval"}),400
+    return jsonify({"ok":True,**_ai_status()})
+
 @app.route("/api/report")
 def report():
     try:
@@ -1567,3 +1774,5 @@ def health():
     return jsonify({"ok":True,"version":VERSION,"controller":UNIFI_URL,"database":db.path})
 
 start_monitor()
+start_speedtest_scheduler()
+start_ai_scheduler()
