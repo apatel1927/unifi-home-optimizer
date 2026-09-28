@@ -24,7 +24,7 @@ from .ai_advisor import analyze_with_openai
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.20.3"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.20.4"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -529,7 +529,9 @@ def _build_support_context():
         "optimizationTests":db.list_optimization_tests(100),
         "automationState":{
             "autoOptimizeEnabled":db.get_setting("auto_optimize_enabled","0")=="1",
+            "autoOptimizeCapabilities":["enable_band_steering","enable_bss_transition"],
             "autoRfEnabled":db.get_setting("auto_rf_enabled","0")=="1",
+            "autoRfCapabilities":["channel","channel_width"],
             "privateRfWriteVerified":db.get_setting("private_rf_write_verified","0")=="1",
             "privateRfConfigured":private_api.configured,
             "rfTestActive":_rf_test_active(),
