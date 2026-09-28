@@ -24,7 +24,7 @@ from .ai_advisor import analyze_with_openai
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.20.1"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.20.2"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -73,6 +73,7 @@ ai_scheduler_started = False
 ai_scheduler_lock = threading.Lock()
 ai_analysis_lock = threading.Lock()
 ai_running = False
+ai_starting = False
 ai_started_at = None
 ai_last_error = None
 
@@ -551,7 +552,8 @@ def _ai_status(include_history=True):
         "model":OPENAI_MODEL,
         "automaticEnabled":db.get_setting("ai_auto_enabled","0")=="1",
         "intervalHours":interval,
-        "running":ai_running,
+        "running":bool(ai_running or ai_starting),
+        "phase":"STARTING" if ai_starting and not ai_running else ("RUNNING" if ai_running else "IDLE"),
         "startedAt":ai_started_at,
         "lastError":ai_last_error,
         "latest":latest,
@@ -592,6 +594,13 @@ def run_ai_analysis(trigger="manual"):
         ai_running=False
         ai_started_at=None
         ai_analysis_lock.release()
+
+def _run_ai_thread(trigger):
+    global ai_starting
+    try:
+        run_ai_analysis(trigger)
+    finally:
+        ai_starting=False
 
 def ai_scheduler_loop():
     time.sleep(90)
@@ -1356,20 +1365,31 @@ def ai_status():
 
 @app.route("/api/ai/analyze",methods=["POST"])
 def ai_analyze():
+    global ai_starting,ai_started_at
     if not OPENAI_API_KEY:
         return jsonify({
             "ok":False,
             "error":"OPENAI_API_KEY is not configured in the Unraid container."
         }),400
-    if ai_running:
+    if ai_running or ai_starting:
         return jsonify({"ok":False,"error":"AI analysis is already running"}),409
     if _rf_test_active():
         return jsonify({
             "ok":False,
             "error":"An RF A/B/A test is active. AI analysis is deferred until the network returns to a stable comparison state."
         }),409
-    threading.Thread(target=run_ai_analysis,args=("manual",),daemon=True).start()
-    return jsonify({"ok":True,"started":True})
+
+    # Mark the job as starting synchronously before spawning the worker so
+    # the UI never falls back to READY during the thread-start race.
+    ai_starting=True
+    ai_started_at=datetime.now(timezone.utc).isoformat()
+    threading.Thread(target=_run_ai_thread,args=("manual",),daemon=True).start()
+    return jsonify({
+        "ok":True,
+        "started":True,
+        "phase":"STARTING",
+        "startedAt":ai_started_at
+    })
 
 @app.route("/api/ai/settings",methods=["POST"])
 def ai_settings():
