@@ -116,6 +116,28 @@ def _traffic_rows_from_report(data):
         })
     return rows
 
+def _traffic_live_rows_from_summary(summary):
+    latest={_norm_mac(x.get("mac")):x for x in (summary.get("latestClients") or []) if x.get("mac")}
+    rows=[]
+    for raw in _classic_clients_cached():
+        mac=_norm_mac(raw.get("mac"))
+        if not mac:
+            continue
+        meta=latest.get(mac) or {}
+        rows.append({
+            "mac":mac,
+            "name":meta.get("name") or raw.get("name") or raw.get("hostname") or mac,
+            "ip":meta.get("ip") or raw.get("ip"),
+            "vlanId":meta.get("vlan_id") if meta.get("vlan_id") is not None else raw.get("vlan"),
+            "networkName":meta.get("network_name") or raw.get("network") or raw.get("network_name") or "Unknown",
+            "uplinkName":meta.get("uplink_name") or "Unknown",
+            "rxBytes":_int_counter(raw.get("rx_bytes")),
+            "txBytes":_int_counter(raw.get("tx_bytes")),
+            "rxRateBps":_classic_bytes_rate_bps(raw,"rx"),
+            "txRateBps":_classic_bytes_rate_bps(raw,"tx"),
+        })
+    return rows
+
 def _dpi_reference_maps():
     now=time.time()
     if dpi_reference_cache["categories"] and now-dpi_reference_cache["ts"] < 21600:
@@ -961,9 +983,7 @@ def traffic_data():
     live_rows=[]
     if private_api.configured:
         try:
-            data=report_data()
-            if data:
-                live_rows=_traffic_rows_from_report(data)
+            live_rows=_traffic_live_rows_from_summary(summary)
         except Exception as e:
             print("Live traffic retrieval error:",e,flush=True)
 
