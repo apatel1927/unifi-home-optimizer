@@ -33,7 +33,7 @@
     <button class="nav" data-page="topology">Topology</button>
     <button class="nav" data-page="audit">Network Audit</button>
     <button class="nav" data-page="roaming">Roaming</button>
-    <button class="nav" data-page="switches">Switches</button>
+    <button class="nav" data-page="switches">Wired / Switches</button>
     <button class="nav" data-page="history">History</button>
     <button class="nav" data-page="system">System</button>
   </aside>
@@ -563,7 +563,7 @@
           <h2>Network Topology</h2>
           <span class="muted">Live path from the Internet and UDM through switches, access points, wired clients, and Wi-Fi clients.</span>
         </div>
-        <button class="secondary" onclick="renderTopology()">Refresh</button>
+        <button class="secondary" onclick="loadTopology()">Refresh</button>
       </div>
 
       <div class="summary-grid topology-summary-grid">
@@ -687,8 +687,91 @@
     </section>
 
     <section id="switches" class="page">
-      <div class="section-head"><h2>Switch ports</h2><span class="muted">Negotiated link speed is informational unless the endpoint is expected to be faster.</span></div>
-      <div id="switchContainer"></div>
+      <div class="section-head">
+        <div>
+          <h2>Wired & Switch Audit</h2>
+          <span class="muted">Live switch-port health, endpoint mapping, negotiated speed, PoE, traffic, errors and 24-hour link-change history.</span>
+        </div>
+        <button class="secondary" onclick="loadWiredAudit()">Refresh</button>
+      </div>
+
+      <div id="wiredAuditNotice" class="panel notice">
+        Loading wired port inventory…
+      </div>
+
+      <div class="summary-grid wired-summary-grid">
+        <div class="summary-card"><h3>Wired score</h3><div id="wiredScore" class="big">—</div></div>
+        <div class="summary-card"><h3>Active ports</h3><div id="wiredActive" class="big">—</div></div>
+        <div class="summary-card"><h3>Good</h3><div id="wiredGood" class="big good">—</div></div>
+        <div class="summary-card"><h3>Expected low-speed</h3><div id="wiredNormal" class="big good">—</div></div>
+        <div class="summary-card"><h3>Review</h3><div id="wiredReview" class="big info">—</div></div>
+        <div class="summary-card"><h3>Warnings</h3><div id="wiredWarning" class="big warn">—</div></div>
+        <div class="summary-card"><h3>PoE powered</h3><div id="wiredPoe" class="big">—</div></div>
+        <div class="summary-card"><h3>Flapping / changing</h3><div id="wiredFlapping" class="big">—</div></div>
+      </div>
+
+      <div class="panel client-filter-panel wired-filter-panel">
+        <div class="client-filter-grid">
+          <label class="client-filter wide">
+            <span>Search</span>
+            <input id="wiredSearch" class="search" placeholder="Switch, endpoint, IP, port, VLAN…">
+          </label>
+          <label class="client-filter">
+            <span>Switch</span>
+            <select id="wiredSwitchFilter" class="search"><option value="">All switches</option></select>
+          </label>
+          <label class="client-filter">
+            <span>Status</span>
+            <select id="wiredStatusFilter" class="search">
+              <option value="">All statuses</option>
+              <option value="WARNING">Warning</option>
+              <option value="REVIEW">Review</option>
+              <option value="NORMAL">Expected low-speed</option>
+              <option value="GOOD">Good</option>
+              <option value="UNUSED">Unused</option>
+            </select>
+          </label>
+          <label class="topology-toggle wired-active-toggle">
+            <input id="wiredActiveOnly" type="checkbox" checked>
+            <span>Active ports only</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="panel table-wrap wired-port-table-panel">
+        <table>
+          <thead>
+            <tr>
+              <th>Switch / port</th>
+              <th>Connected endpoint</th>
+              <th>Negotiated link</th>
+              <th>Port capability</th>
+              <th>PoE</th>
+              <th>Live traffic</th>
+              <th>Errors / drops</th>
+              <th>VLAN / profile</th>
+              <th>24h changes</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="wiredPortTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section-head">
+        <div><h2>Recent link changes</h2><span class="muted">State, speed and endpoint changes learned while the optimizer is running.</span></div>
+      </div>
+      <div class="panel table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Switch</th><th>Port</th><th>Change</th><th>From</th><th>To</th><th>Endpoint</th></tr></thead>
+          <tbody id="wiredEventTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section-head"><h2>How this score works</h2></div>
+      <div class="panel notice">
+        A 100 Mbps link is not automatically considered bad. The audit treats likely IoT/camera-class endpoints as expected low-speed links, while a UniFi infrastructure device at 100 Mbps, repeated link flaps, PoE faults or large error/drop counts receive stronger attention.
+      </div>
     </section>
 
     <section id="system" class="page">
