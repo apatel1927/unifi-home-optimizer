@@ -132,6 +132,42 @@ class Database:
         );
         CREATE INDEX IF NOT EXISTS idx_radio_config_changes_ap_band_ts
             ON radio_config_changes(ap_id,band,ts);
+        CREATE TABLE IF NOT EXISTS traffic_client_samples(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            mac TEXT NOT NULL,
+            name TEXT,
+            ip TEXT,
+            vlan_id TEXT,
+            network_name TEXT,
+            uplink_name TEXT,
+            rx_bytes INTEGER,
+            tx_bytes INTEGER,
+            rx_delta_bytes INTEGER NOT NULL DEFAULT 0,
+            tx_delta_bytes INTEGER NOT NULL DEFAULT 0,
+            rx_rate_bps REAL,
+            tx_rate_bps REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_traffic_client_samples_ts
+            ON traffic_client_samples(ts);
+        CREATE INDEX IF NOT EXISTS idx_traffic_client_samples_mac_ts
+            ON traffic_client_samples(mac,ts);
+        CREATE TABLE IF NOT EXISTS traffic_dpi_samples(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            category_id INTEGER,
+            app_id INTEGER,
+            category_name TEXT,
+            app_name TEXT,
+            rx_bytes INTEGER,
+            tx_bytes INTEGER,
+            rx_delta_bytes INTEGER NOT NULL DEFAULT 0,
+            tx_delta_bytes INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_traffic_dpi_samples_ts
+            ON traffic_dpi_samples(ts);
+        CREATE INDEX IF NOT EXISTS idx_traffic_dpi_samples_key_ts
+            ON traffic_dpi_samples(category_id,app_id,ts);
         CREATE TABLE IF NOT EXISTS speedtest_results(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -492,7 +528,7 @@ class Database:
 
     def database_stats(self):
         c=self.connect()
-        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results"]
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples"]
         counts={}
         for table in tables:
             try:
@@ -780,4 +816,226 @@ class Database:
             "latest":dict(latest) if latest else None,
             "latestSuccess":dict(latest_success) if latest_success else None,
             "stats":dict(stats) if stats else {}
+        }
+
+
+    @staticmethod
+    def _counter_delta(current, previous):
+        try:
+            if current is None or previous is None:
+                return 0
+            current=int(current)
+            previous=int(previous)
+            return current-previous if current >= previous else 0
+        except Exception:
+            return 0
+
+    def record_traffic_clients(self, clients):
+        if not clients:
+            return
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        for item in clients:
+            mac=(item.get("mac") or "").lower()
+            if not mac:
+                continue
+            prev=c.execute("""
+                SELECT rx_bytes,tx_bytes
+                FROM traffic_client_samples
+                WHERE mac=?
+                ORDER BY id DESC LIMIT 1
+            """,(mac,)).fetchone()
+            rx=item.get("rxBytes")
+            tx=item.get("txBytes")
+            rx_delta=self._counter_delta(rx,prev["rx_bytes"] if prev else None)
+            tx_delta=self._counter_delta(tx,prev["tx_bytes"] if prev else None)
+            c.execute("""
+                INSERT INTO traffic_client_samples(
+                    ts,mac,name,ip,vlan_id,network_name,uplink_name,
+                    rx_bytes,tx_bytes,rx_delta_bytes,tx_delta_bytes,
+                    rx_rate_bps,tx_rate_bps
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,(
+                now,mac,item.get("name"),item.get("ip"),
+                str(item.get("vlanId")) if item.get("vlanId") is not None else None,
+                item.get("networkName"),item.get("uplinkName"),
+                rx,tx,rx_delta,tx_delta,
+                item.get("rxRateBps"),item.get("txRateBps")
+            ))
+        c.execute("DELETE FROM traffic_client_samples WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def record_traffic_dpi(self, rows):
+        if not rows:
+            return
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        for item in rows:
+            cat=item.get("categoryId")
+            app=item.get("appId")
+            prev=c.execute("""
+                SELECT rx_bytes,tx_bytes
+                FROM traffic_dpi_samples
+                WHERE category_id IS ? AND app_id IS ?
+                ORDER BY id DESC LIMIT 1
+            """,(cat,app)).fetchone()
+            rx=item.get("rxBytes")
+            tx=item.get("txBytes")
+            rx_delta=self._counter_delta(rx,prev["rx_bytes"] if prev else None)
+            tx_delta=self._counter_delta(tx,prev["tx_bytes"] if prev else None)
+            c.execute("""
+                INSERT INTO traffic_dpi_samples(
+                    ts,category_id,app_id,category_name,app_name,
+                    rx_bytes,tx_bytes,rx_delta_bytes,tx_delta_bytes
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,(
+                now,cat,app,item.get("categoryName"),item.get("appName"),
+                rx,tx,rx_delta,tx_delta
+            ))
+        c.execute("DELETE FROM traffic_dpi_samples WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def traffic_summary(self, hours=24):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+
+        totals=c.execute("""
+            SELECT
+                COALESCE(SUM(rx_delta_bytes),0) AS rx_bytes,
+                COALESCE(SUM(tx_delta_bytes),0) AS tx_bytes,
+                COUNT(DISTINCT mac) AS client_count
+            FROM traffic_client_samples
+            WHERE ts>=?
+        """,(cutoff,)).fetchone()
+
+        top_clients=c.execute("""
+            SELECT
+                mac,
+                MAX(name) AS name,
+                MAX(ip) AS ip,
+                MAX(vlan_id) AS vlan_id,
+                MAX(network_name) AS network_name,
+                MAX(uplink_name) AS uplink_name,
+                SUM(rx_delta_bytes) AS rx_bytes,
+                SUM(tx_delta_bytes) AS tx_bytes,
+                SUM(rx_delta_bytes+tx_delta_bytes) AS total_bytes
+            FROM traffic_client_samples
+            WHERE ts>=?
+            GROUP BY mac
+            ORDER BY total_bytes DESC
+            LIMIT 100
+        """,(cutoff,)).fetchall()
+
+        top_vlans=c.execute("""
+            SELECT
+                COALESCE(vlan_id,'Unknown') AS vlan_id,
+                COALESCE(MAX(network_name),'Unknown') AS network_name,
+                SUM(rx_delta_bytes) AS rx_bytes,
+                SUM(tx_delta_bytes) AS tx_bytes,
+                SUM(rx_delta_bytes+tx_delta_bytes) AS total_bytes,
+                COUNT(DISTINCT mac) AS client_count
+            FROM traffic_client_samples
+            WHERE ts>=?
+            GROUP BY COALESCE(vlan_id,'Unknown')
+            ORDER BY total_bytes DESC
+        """,(cutoff,)).fetchall()
+
+        top_networks=c.execute("""
+            SELECT
+                COALESCE(network_name,'Unknown') AS network_name,
+                SUM(rx_delta_bytes) AS rx_bytes,
+                SUM(tx_delta_bytes) AS tx_bytes,
+                SUM(rx_delta_bytes+tx_delta_bytes) AS total_bytes,
+                COUNT(DISTINCT mac) AS client_count
+            FROM traffic_client_samples
+            WHERE ts>=?
+            GROUP BY COALESCE(network_name,'Unknown')
+            ORDER BY total_bytes DESC
+        """,(cutoff,)).fetchall()
+
+        top_uplinks=c.execute("""
+            SELECT
+                COALESCE(uplink_name,'Unknown') AS uplink_name,
+                SUM(rx_delta_bytes) AS rx_bytes,
+                SUM(tx_delta_bytes) AS tx_bytes,
+                SUM(rx_delta_bytes+tx_delta_bytes) AS total_bytes,
+                COUNT(DISTINCT mac) AS client_count
+            FROM traffic_client_samples
+            WHERE ts>=?
+            GROUP BY COALESCE(uplink_name,'Unknown')
+            ORDER BY total_bytes DESC
+        """,(cutoff,)).fetchall()
+
+        bucket_expr="substr(ts,1,13)"
+        series=c.execute(f"""
+            SELECT
+                {bucket_expr} AS bucket,
+                SUM(rx_delta_bytes) AS rx_bytes,
+                SUM(tx_delta_bytes) AS tx_bytes
+            FROM traffic_client_samples
+            WHERE ts>=?
+            GROUP BY {bucket_expr}
+            ORDER BY bucket ASC
+        """,(cutoff,)).fetchall()
+
+        latest_rows=c.execute("""
+            SELECT t.*
+            FROM traffic_client_samples t
+            JOIN (
+                SELECT mac,MAX(id) AS max_id
+                FROM traffic_client_samples
+                GROUP BY mac
+            ) x ON x.max_id=t.id
+            ORDER BY (COALESCE(t.rx_rate_bps,0)+COALESCE(t.tx_rate_bps,0)) DESC
+        """).fetchall()
+
+        c.close()
+        return {
+            "hours":hours,
+            "totals":dict(totals) if totals else {"rx_bytes":0,"tx_bytes":0,"client_count":0},
+            "topClients":[dict(r) for r in top_clients],
+            "topVlans":[dict(r) for r in top_vlans],
+            "topNetworks":[dict(r) for r in top_networks],
+            "topUplinks":[dict(r) for r in top_uplinks],
+            "series":[dict(r) for r in series],
+            "latestClients":[dict(r) for r in latest_rows]
+        }
+
+    def traffic_dpi_summary(self, hours=24):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+        apps=c.execute("""
+            SELECT
+                category_id,app_id,
+                COALESCE(MAX(category_name),'Unknown') AS category_name,
+                COALESCE(MAX(app_name),'Unknown') AS app_name,
+                SUM(rx_delta_bytes) AS rx_bytes,
+                SUM(tx_delta_bytes) AS tx_bytes,
+                SUM(rx_delta_bytes+tx_delta_bytes) AS total_bytes
+            FROM traffic_dpi_samples
+            WHERE ts>=?
+            GROUP BY category_id,app_id
+            ORDER BY total_bytes DESC
+            LIMIT 100
+        """,(cutoff,)).fetchall()
+        categories=c.execute("""
+            SELECT
+                category_id,
+                COALESCE(MAX(category_name),'Unknown') AS category_name,
+                SUM(rx_delta_bytes) AS rx_bytes,
+                SUM(tx_delta_bytes) AS tx_bytes,
+                SUM(rx_delta_bytes+tx_delta_bytes) AS total_bytes
+            FROM traffic_dpi_samples
+            WHERE ts>=?
+            GROUP BY category_id
+            ORDER BY total_bytes DESC
+        """,(cutoff,)).fetchall()
+        c.close()
+        return {
+            "apps":[dict(r) for r in apps],
+            "categories":[dict(r) for r in categories]
         }
