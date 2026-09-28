@@ -2,8 +2,17 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.19.1
+## v0.20.0
 
+- Export / AI tab creates a one-click sanitized support bundle for sharing with ChatGPT
+- Export formats include a ZIP with individual JSON sections, a single JSON file, and a compact copy-to-clipboard text summary
+- Export recursively redacts passwords, API keys, tokens, secrets and credentials while retaining useful local troubleshooting identifiers
+- Optional embedded OpenAI advisor uses the Responses API with an API key supplied only through the Unraid container environment
+- Manual AI analysis plus optional scheduled 1/3/6/12/24-hour advisory reviews
+- AI analysis is advisory-only and pauses during active RF A/B/A tests; it cannot directly change firewall, VLAN or Wi-Fi settings
+- Existing deterministic Auto RF and Auto Optimize remain the execution layer for already-validated low-risk automation
+- AI analysis history is stored locally in SQLite for the configured retention period
+- Automatic speed-test scheduler is explicitly started with the application
 - Fixes wired false positives from lifetime error/drop counters by scoring only counter growth between monitor samples
 - Keeps cumulative error/drop totals visible while showing a separate recent-delta line
 - Fixes PoE false faults: poe_good=false alone no longer means FAULT when a port simply is not delivering PoE
@@ -218,3 +227,19 @@ Future audit releases can add port-forward/UPnP exposure, deeper switch error/Po
 The Wired / Switches page combines the supported Integration API with read-only classic device/client telemetry when local private credentials are configured. Active ports are mapped to endpoints where UniFi exposes switch MAC/port relationships. The page shows negotiated link speed, port capability, PoE, live traffic, errors/drops, VLAN/profile data and 24-hour state/speed changes.
 
 The wired score is intentionally endpoint-aware. A 100 Mbps link is not automatically a fault: likely IoT/camera/smart-home endpoints can be classified as expected low-speed links, while 100 Mbps infrastructure links, explicit PoE faults and repeated link flaps receive stronger attention. Error/drop totals are displayed as cumulative controller counters, but scoring uses only increases observed between monitor samples so old lifetime counters do not create false warnings. Link-change history begins learning after v0.19.0 is installed.
+
+
+## Export and AI advisor
+
+The Export / AI tab can generate a support bundle for sharing with ChatGPT. The ZIP contains a compact README plus sanitized JSON for the current network audit, wired audit, WAN quality, traffic summary, speed tests, network snapshot and recent optimizer log. A single JSON export and a compact clipboard summary are also available.
+
+Sensitive configuration keys containing password, passphrase, secret, PSK, token, API key, private key, credentials, authorization or cookies are recursively replaced with [REDACTED]. Local device names, MAC addresses and private IP addresses are intentionally retained because they are useful when troubleshooting a home network.
+
+Embedded AI is optional. Configure these Unraid environment variables only if you want the optimizer to call the OpenAI API:
+
+```
+OPENAI_API_KEY=<your OpenAI API key>
+OPENAI_MODEL=gpt-5.6-luna
+```
+
+The API key is read from the container environment, is never returned by the app and is excluded from support exports. The AI advisor can run manually or on a 1/3/6/12/24-hour schedule. AI is advisory-only: it summarizes current health, proposes safe automations and identifies approval-required changes. Existing deterministic automation remains responsible for actual configuration changes.
