@@ -2,7 +2,8 @@ import os
 import threading
 import time
 import requests
-import speedtest
+import subprocess
+import json
 import dns.resolver
 from ping3 import ping
 import traceback
@@ -19,7 +20,7 @@ from .audit import build_network_audit
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.18.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.18.1"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -871,10 +872,59 @@ def _rf_test_active():
     except Exception:
         return False
 
+def _ookla_speedtest_available():
+    try:
+        r=subprocess.run(
+            ["speedtest","--version"],
+            capture_output=True,text=True,timeout=10
+        )
+        return r.returncode==0
+    except Exception:
+        return False
+
+def _list_speedtest_servers():
+    try:
+        r=subprocess.run(
+            ["speedtest","--accept-license","--accept-gdpr","--servers"],
+            capture_output=True,text=True,timeout=30
+        )
+        if r.returncode!=0:
+            return {"ok":False,"error":(r.stderr or r.stdout or "Unable to list Ookla servers").strip()}
+        lines=r.stdout.splitlines()
+        header_index=next((i for i,line in enumerate(lines) if "ID" in line and "Name" in line and "Location" in line and "Country" in line),None)
+        if header_index is None:
+            return {"ok":False,"error":"Unexpected Ookla server-list format"}
+        header=lines[header_index]
+        name_pos=header.find("Name")
+        location_pos=header.find("Location")
+        country_pos=header.find("Country")
+        servers=[]
+        for line in lines[header_index+1:]:
+            if not line.strip() or set(line.strip())=={"="}:
+                continue
+            if len(line)<=name_pos:
+                continue
+            sid=line[:name_pos].strip()
+            if not sid.isdigit():
+                continue
+            name=line[name_pos:location_pos].strip() if location_pos>name_pos else ""
+            location=line[location_pos:country_pos].strip() if country_pos>location_pos else ""
+            country=line[country_pos:].strip() if country_pos>=0 else ""
+            servers.append({
+                "id":sid,
+                "name":name,
+                "location":location,
+                "country":country,
+            })
+        return {"ok":True,"servers":servers[:25]}
+    except Exception as e:
+        return {"ok":False,"error":str(e)}
+
 def _speedtest_state():
     summary=db.speedtest_summary(30)
     interval=max(1,min(24,int(float(db.get_setting("speedtest_interval_hours","6") or 6))))
     enabled=db.get_setting("speedtest_enabled","1")=="1"
+    preferred_server_id=(db.get_setting("speedtest_preferred_server_id","") or "").strip()
     latest=summary.get("latest")
     next_due=None
     if latest and latest.get("ts"):
@@ -893,6 +943,9 @@ def _speedtest_state():
         "lastError":speedtest_last_error,
         "nextDue":next_due,
         "deferredByRfTest":_rf_test_active(),
+        "preferredServerId":preferred_server_id,
+        "engine":"OOKLA_OFFICIAL",
+        "engineAvailable":_ookla_speedtest_available(),
         **summary
     }
 
@@ -905,36 +958,61 @@ def run_speedtest_job(source="automatic"):
     speedtest_last_error=None
     started=time.perf_counter()
     try:
-        tester=speedtest.Speedtest(timeout=20,secure=True)
-        server=tester.get_best_server() or {}
-        tester.download()
-        tester.upload(pre_allocate=False)
-        results=tester.results.dict()
+        preferred=(db.get_setting("speedtest_preferred_server_id","") or "").strip()
+        cmd=[
+            "speedtest",
+            "--accept-license",
+            "--accept-gdpr",
+            "--progress=no",
+            "--format=json",
+        ]
+        if preferred:
+            cmd.append("--server-id="+preferred)
+
+        proc=subprocess.run(cmd,capture_output=True,text=True,timeout=180)
+        if proc.returncode!=0:
+            raise RuntimeError((proc.stderr or proc.stdout or "Ookla Speedtest CLI failed").strip())
+
+        results=json.loads(proc.stdout)
         duration=time.perf_counter()-started
-        download=float(results.get("download") or 0)/1_000_000.0
-        upload=float(results.get("upload") or 0)/1_000_000.0
-        ping=float(results.get("ping")) if results.get("ping") is not None else None
-        srv=results.get("server") or server or {}
-        client=results.get("client") or {}
+        download=float(((results.get("download") or {}).get("bandwidth") or 0))*8.0/1_000_000.0
+        upload=float(((results.get("upload") or {}).get("bandwidth") or 0))*8.0/1_000_000.0
+        ping_data=results.get("ping") or {}
+        ping=float(ping_data.get("latency")) if ping_data.get("latency") is not None else None
+        jitter=float(ping_data.get("jitter")) if ping_data.get("jitter") is not None else None
+        packet_loss=results.get("packetLoss")
+        packet_loss=float(packet_loss) if packet_loss is not None else None
+        srv=results.get("server") or {}
+        iface=results.get("interface") or {}
+        server_provider=srv.get("name")
+        server_location=srv.get("location")
+        server_country=srv.get("country")
+        server_label=server_location or server_provider
+        client_ip=iface.get("externalIp") or iface.get("internalIp")
+
         db.record_speedtest(
             True,
             download_mbps=download,
             upload_mbps=upload,
             ping_ms=ping,
-            server_name=srv.get("name"),
-            server_sponsor=srv.get("sponsor"),
+            server_name=server_label,
+            server_sponsor=server_provider,
             server_id=srv.get("id"),
-            server_distance_km=srv.get("d"),
-            client_ip=client.get("ip"),
+            server_location=server_location,
+            server_country=server_country,
+            server_host=srv.get("host"),
+            jitter_ms=jitter,
+            packet_loss_pct=packet_loss,
+            client_ip=client_ip,
             duration_sec=duration,
         )
-        db.log(
-            "SPEEDTEST",
-            source,
-            f"{download:.1f} Mbps down / {upload:.1f} Mbps up / {ping:.1f} ms ping" if ping is not None
-            else f"{download:.1f} Mbps down / {upload:.1f} Mbps up",
-            "SUCCESS"
-        )
+        server_desc=" / ".join([x for x in (server_provider,server_location,server_country) if x])
+        detail=f"{download:.1f} Mbps down / {upload:.1f} Mbps up"
+        if ping is not None:
+            detail+=f" / {ping:.1f} ms ping"
+        if server_desc:
+            detail+=" / "+server_desc
+        db.log("SPEEDTEST",source,detail,"SUCCESS")
         return True
     except Exception as e:
         duration=time.perf_counter()-started
@@ -1082,6 +1160,12 @@ def speedtest_data():
     state["history"]=db.speedtest_history(30,500)
     return jsonify({"ok":True,**state})
 
+@app.route("/api/speedtest/servers")
+def speedtest_servers():
+    result=_list_speedtest_servers()
+    status=200 if result.get("ok") else 500
+    return jsonify(result),status
+
 @app.route("/api/speedtest/run",methods=["POST"])
 def speedtest_run():
     if speedtest_running:
@@ -1107,6 +1191,11 @@ def speedtest_settings():
             db.set_setting("speedtest_interval_hours",str(interval))
         except Exception:
             return jsonify({"ok":False,"error":"Invalid speed test interval"}),400
+    if "preferredServerId" in body:
+        value=str(body.get("preferredServerId") or "").strip()
+        if value and not value.isdigit():
+            return jsonify({"ok":False,"error":"Preferred server ID must be numeric"}),400
+        db.set_setting("speedtest_preferred_server_id",value)
     return jsonify({"ok":True,**_speedtest_state()})
 
 @app.route("/api/network-audit")
