@@ -657,3 +657,56 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 .speedtest-server-note{margin:-2px 0 14px}
 @media(max-width:1050px){.topology-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:650px){.topology-controls{grid-template-columns:1fr}.topology-device{grid-template-columns:38px minmax(180px,1fr);min-width:420px}.topology-counts{grid-column:2;justify-content:flex-start}.topology-children{margin-left:18px;padding-left:16px}}
+
+
+/* v0.18.0 network audit */
+.audit-summary-grid{margin-bottom:16px}
+.audit-score-grid{grid-template-columns:repeat(4,minmax(140px,1fr))}
+.audit-filter-panel{margin-bottom:16px}
+.audit-finding{
+  padding:16px 17px;
+  margin-bottom:10px;
+  border-radius:13px;
+  border:1px solid rgba(100,137,187,.14);
+  background:linear-gradient(180deg,rgba(13,25,41,.96),rgba(10,20,33,.96));
+}
+.audit-finding.critical{border-color:rgba(255,102,116,.3)}
+.audit-finding.warning{border-color:rgba(255,190,88,.26)}
+.audit-finding.review{border-color:rgba(88,154,255,.22)}
+.audit-finding.pass{border-color:rgba(74,211,157,.2)}
+.audit-finding-head{display:flex;justify-content:space-between;gap:14px;align-items:center;flex-wrap:wrap}
+.audit-category,.audit-target{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.audit-target{text-transform:none}
+.audit-finding h3{margin:10px 0 5px;font-size:14px}
+.audit-finding p{margin:0;color:#cbd7e6;font-size:12px;line-height:1.5}
+.audit-recommendation{
+  display:grid;
+  grid-template-columns:150px 1fr;
+  gap:12px;
+  margin-top:12px;
+  padding-top:11px;
+  border-top:1px solid rgba(90,122,165,.14);
+  font-size:11px;
+}
+.audit-recommendation b{color:#dbe8f8}
+.audit-recommendation span{color:var(--muted)}
+.audit-inventory-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:16px;
+}
+.audit-inventory-card{padding:16px}
+.audit-inventory-card h3{margin:0 0 9px;font-size:14px}
+.audit-inventory-row{
+  display:flex;
+  justify-content:space-between;
+  gap:14px;
+  padding:9px 0;
+  border-top:1px solid rgba(90,122,165,.12);
+}
+.audit-inventory-row:first-child{border-top:0}
+.audit-inventory-row b{font-size:11px;color:#e5eef8}
+.audit-inventory-row span{font-size:10px;color:var(--muted);text-align:right}
+@media(max-width:1000px){.audit-score-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.audit-inventory-grid{grid-template-columns:1fr}.audit-recommendation{grid-template-columns:1fr;gap:4px}}
+@media(max-width:520px){.audit-score-grid{grid-template-columns:1fr}}
