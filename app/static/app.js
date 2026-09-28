@@ -948,20 +948,31 @@ async function loadAiStatus(){
 
 async function runAiAnalysisNow(){
   const btn=document.getElementById("runAiAnalysisBtn");
+  const notice=document.getElementById("aiAdvisorNotice");
   if(btn){btn.disabled=true;btn.textContent="Starting AI analysis…";}
+  let started=false;
   try{
     const r=await fetch("/api/ai/analyze",{method:"POST"});
     const d=await r.json();
     if(!d.ok){
-      const notice=document.getElementById("aiAdvisorNotice");
-      if(notice)notice.innerHTML='<b class="warn">'+esc(d.error||"Unable to start AI analysis")+'</b>';
+      const blockers=(d.blockers||[]).map(x=>
+        [x.apName,x.band!=null?x.band+" GHz":null,x.status].filter(Boolean).join(" · ")
+      );
+      if(notice){
+        notice.innerHTML='<b class="warn">'+esc(d.error||"Unable to start AI analysis")+'</b>'+
+          (blockers.length?'<br><span class="muted">Blocking RF test: '+esc(blockers.join(" | "))+'</span>':'');
+      }
+      if(btn){btn.disabled=false;btn.textContent="Analyze network now";}
+      return;
     }
+    started=true;
+    if(notice)notice.innerHTML='<b class="info">AI analysis starting…</b><br><span class="muted">Building a stable sanitized network snapshot.</span>';
     await loadAiStatus();
   }catch(e){
-    const notice=document.getElementById("aiAdvisorNotice");
     if(notice)notice.innerHTML='<b class="bad">'+esc(e.message||e)+'</b>';
+    if(btn){btn.disabled=false;btn.textContent="Analyze network now";}
   }finally{
-    setTimeout(loadAiStatus,1500);
+    if(started)setTimeout(loadAiStatus,1500);
   }
 }
 
