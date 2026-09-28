@@ -30,6 +30,7 @@
     <button class="nav" data-page="speedtest">Speed Test</button>
     <button class="nav" data-page="optimize">Auto Optimize</button>
     <button class="nav" data-page="clients">Clients</button>
+    <button class="nav" data-page="topology">Topology</button>
     <button class="nav" data-page="roaming">Roaming</button>
     <button class="nav" data-page="switches">Switches</button>
     <button class="nav" data-page="history">History</button>
@@ -341,6 +342,9 @@
       </div>
 
       <div id="speedtestNotice" class="panel notice speedtest-notice">Loading speed test status…</div>
+      <div class="panel notice speedtest-server-note">
+        The Speedtest.net-compatible server is selected automatically for each run using the speedtest client&apos;s best-server selection. The exact server, sponsor, location and distance used for the completed test are stored with that result and shown below.
+      </div>
 
       <div class="summary-grid">
         <div class="summary-card"><h3>Download</h3><div id="speedtestDownload" class="big">—</div><div class="muted">Latest successful test</div></div>
@@ -533,6 +537,56 @@
           </thead>
           <tbody id="clientTable"></tbody>
         </table>
+      </div>
+    </section>
+
+    <section id="topology" class="page">
+      <div class="section-head">
+        <div>
+          <h2>Network Topology</h2>
+          <span class="muted">Live path from the Internet and UDM through switches, access points, wired clients, and Wi-Fi clients.</span>
+        </div>
+        <button class="secondary" onclick="renderTopology()">Refresh</button>
+      </div>
+
+      <div class="summary-grid topology-summary-grid">
+        <div class="summary-card"><h3>UniFi devices</h3><div id="topologyDeviceCount" class="big">—</div></div>
+        <div class="summary-card"><h3>Switches</h3><div id="topologySwitchCount" class="big">—</div></div>
+        <div class="summary-card"><h3>Access points</h3><div id="topologyApCount" class="big">—</div></div>
+        <div class="summary-card"><h3>Connected clients</h3><div id="topologyClientCount" class="big">—</div></div>
+      </div>
+
+      <div class="panel topology-controls">
+        <label class="topology-toggle"><input id="topologyShowClients" type="checkbox" checked><span>Show clients</span></label>
+        <label class="client-filter">
+          <span>Client type</span>
+          <select id="topologyClientType" class="search">
+            <option value="">All clients</option>
+            <option value="WIRELESS">Wireless only</option>
+            <option value="WIRED">Wired only</option>
+            <option value="VPN">VPN only</option>
+          </select>
+        </label>
+        <label class="client-filter">
+          <span>VLAN</span>
+          <select id="topologyVlanFilter" class="search"><option value="">All VLANs</option></select>
+        </label>
+        <label class="client-filter">
+          <span>Network</span>
+          <select id="topologyNetworkFilter" class="search"><option value="">All networks</option></select>
+        </label>
+        <label class="topology-toggle"><input id="topologyCompact" type="checkbox"><span>Compact clients</span></label>
+      </div>
+
+      <div id="topologyNotice" class="panel notice">
+        Device-to-device paths use the live UniFi uplink relationship. Client placement uses the current uplink device reported by UniFi.
+      </div>
+
+      <div id="topologyTree" class="topology-tree"></div>
+
+      <div class="section-head"><h2>Topology notes</h2></div>
+      <div class="panel notice">
+        This is a logical/live topology, not a floor-plan drawing. A client is shown beneath the AP or switch UniFi currently reports as its uplink. If UniFi does not expose an uplink for a device, it appears in an Unresolved section instead of the app guessing its path.
       </div>
     </section>
 
