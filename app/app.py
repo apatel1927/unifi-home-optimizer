@@ -14,7 +14,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, buil
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.14.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.15.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -45,6 +45,11 @@ speedtest_started_at = None
 speedtest_last_error = None
 speedtest_scheduler_started = False
 speedtest_scheduler_lock = threading.Lock()
+traffic_sample_interval_seconds = 300
+traffic_last_sample_monotonic = 0.0
+traffic_last_sample_at = None
+traffic_last_error = None
+dpi_reference_cache = {"ts":0.0,"categories":{},"apps":{}}
 
 def _norm_mac(value):
     return str(value or "").lower().replace("-",":").strip()
@@ -64,6 +69,151 @@ def _classic_clients_cached():
     except Exception as e:
         print("Classic client inventory error:",e,flush=True)
     return private_client_cache["items"]
+
+def _num(value):
+    try:
+        if value is None or value=="":
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+def _int_counter(value):
+    n=_num(value)
+    return int(n) if n is not None and n >= 0 else None
+
+def _classic_bytes_rate_bps(item, direction):
+    # UniFi classic station payload commonly exposes rx_bytes-r / tx_bytes-r
+    # as byte rates. Keep this separate from rx_rate/tx_rate, which can be
+    # Wi-Fi PHY rates rather than client traffic throughput.
+    raw=item.get(direction+"_bytes-r")
+    if raw is None:
+        raw=item.get(direction+"_bytes_r")
+    if raw is None:
+        raw=item.get(direction+"BytesRate")
+    n=_num(raw)
+    return n*8.0 if n is not None else None
+
+def _traffic_rows_from_report(data):
+    enriched={_norm_mac(x.get("macAddress")):x for x in (data.get("clients") or []) if x.get("macAddress")}
+    rows=[]
+    for raw in _classic_clients_cached():
+        mac=_norm_mac(raw.get("mac"))
+        if not mac:
+            continue
+        client=enriched.get(mac) or {}
+        rows.append({
+            "mac":mac,
+            "name":client.get("name") or raw.get("name") or raw.get("hostname") or mac,
+            "ip":client.get("ipAddress") or raw.get("ip"),
+            "vlanId":client.get("vlanId") if client.get("vlanId") is not None else raw.get("vlan"),
+            "networkName":client.get("networkName") or raw.get("network") or raw.get("network_name") or "Unknown",
+            "uplinkName":client.get("uplinkDeviceName") or "Unknown",
+            "rxBytes":_int_counter(raw.get("rx_bytes")),
+            "txBytes":_int_counter(raw.get("tx_bytes")),
+            "rxRateBps":_classic_bytes_rate_bps(raw,"rx"),
+            "txRateBps":_classic_bytes_rate_bps(raw,"tx"),
+        })
+    return rows
+
+def _dpi_reference_maps():
+    now=time.time()
+    if dpi_reference_cache["categories"] and now-dpi_reference_cache["ts"] < 21600:
+        return dpi_reference_cache["categories"],dpi_reference_cache["apps"]
+
+    categories={}
+    apps={}
+    try:
+        for item in api.dpi_categories():
+            cid=item.get("id")
+            if cid is None:
+                cid=item.get("categoryId")
+            if cid is None:
+                cid=item.get("category")
+            name=item.get("name") or item.get("displayName") or item.get("description")
+            if cid is not None and name:
+                categories[str(cid)]=str(name)
+    except Exception as e:
+        print("DPI category reference error:",e,flush=True)
+
+    try:
+        for item in api.dpi_applications():
+            aid=item.get("id")
+            if aid is None:
+                aid=item.get("applicationId")
+            if aid is None:
+                aid=item.get("app")
+            cid=item.get("categoryId")
+            if cid is None:
+                cid=item.get("category")
+            name=item.get("name") or item.get("displayName") or item.get("description")
+            if aid is not None and name:
+                apps[str(aid)]=str(name)
+                if cid is not None:
+                    apps[str(cid)+":"+str(aid)]=str(name)
+    except Exception as e:
+        print("DPI application reference error:",e,flush=True)
+
+    dpi_reference_cache["ts"]=now
+    dpi_reference_cache["categories"]=categories
+    dpi_reference_cache["apps"]=apps
+    return categories,apps
+
+def _site_dpi_rows():
+    if not private_api.configured:
+        return []
+    categories,apps=_dpi_reference_maps()
+    output=[]
+    try:
+        tables=private_api.site_dpi()
+        for table in tables:
+            by_app=table.get("by_app") or []
+            if by_app:
+                for item in by_app:
+                    cat=item.get("cat")
+                    app_id=item.get("app")
+                    cat_name=categories.get(str(cat),"Category "+str(cat) if cat is not None else "Unknown")
+                    app_name=(apps.get(str(cat)+":"+str(app_id))
+                              or apps.get(str(app_id))
+                              or ("App "+str(app_id) if app_id is not None else cat_name))
+                    output.append({
+                        "categoryId":cat,
+                        "appId":app_id,
+                        "categoryName":cat_name,
+                        "appName":app_name,
+                        "rxBytes":_int_counter(item.get("rx_bytes")),
+                        "txBytes":_int_counter(item.get("tx_bytes")),
+                    })
+                continue
+            for item in (table.get("by_cat") or []):
+                cat=item.get("cat")
+                output.append({
+                    "categoryId":cat,
+                    "appId":None,
+                    "categoryName":categories.get(str(cat),"Category "+str(cat) if cat is not None else "Unknown"),
+                    "appName":"Unclassified application",
+                    "rxBytes":_int_counter(item.get("rx_bytes")),
+                    "txBytes":_int_counter(item.get("tx_bytes")),
+                })
+    except Exception as e:
+        print("Classic DPI error:",e,flush=True)
+    return output
+
+def _sample_traffic(data):
+    global traffic_last_sample_monotonic,traffic_last_sample_at,traffic_last_error
+    if not private_api.configured:
+        return
+    try:
+        rows=_traffic_rows_from_report(data)
+        db.record_traffic_clients(rows)
+        dpi=_site_dpi_rows()
+        db.record_traffic_dpi(dpi)
+        traffic_last_sample_monotonic=time.monotonic()
+        traffic_last_sample_at=datetime.now(timezone.utc).isoformat()
+        traffic_last_error=None
+    except Exception as e:
+        traffic_last_error=str(e)
+        print("Traffic sampling error:",e,flush=True)
 
 def _enrich_client_inventory(snapshot):
     clients=[dict(x) for x in (snapshot.get("clients") or [])]
@@ -677,7 +827,7 @@ def probe_internet():
         return False, None
 
 def monitor_loop():
-    global last_monitor_cycle,last_monitor_error
+    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic
     elapsed=0
     while True:
         try:
@@ -687,6 +837,8 @@ def monitor_loop():
                     db.record_ap(ap)
                     db.record_radio_configs(ap)
                 db.record_wireless_clients(data["clients"])
+                if (time.monotonic()-traffic_last_sample_monotonic) >= traffic_sample_interval_seconds:
+                    _sample_traffic(data)
                 analysis=data.get("analysis") or {}
                 db.record_health_score(
                     analysis.get("healthScore",0),
@@ -793,6 +945,51 @@ def speedtest_settings():
         except Exception:
             return jsonify({"ok":False,"error":"Invalid speed test interval"}),400
     return jsonify({"ok":True,**_speedtest_state()})
+
+@app.route("/api/traffic")
+def traffic_data():
+    try:
+        hours=int(request.args.get("hours","24"))
+    except Exception:
+        hours=24
+    if hours not in (1,24,168,720):
+        hours=24
+
+    summary=db.traffic_summary(hours)
+    dpi=db.traffic_dpi_summary(hours)
+
+    live_rows=[]
+    if private_api.configured:
+        try:
+            data=report_data()
+            if data:
+                live_rows=_traffic_rows_from_report(data)
+        except Exception as e:
+            print("Live traffic retrieval error:",e,flush=True)
+
+    live_rx=sum(float(x.get("rxRateBps") or 0) for x in live_rows)
+    live_tx=sum(float(x.get("txRateBps") or 0) for x in live_rows)
+
+    return jsonify({
+        "ok":True,
+        "hours":hours,
+        "privateConfigured":private_api.configured,
+        "sampleIntervalSeconds":traffic_sample_interval_seconds,
+        "lastSampleAt":traffic_last_sample_at,
+        "lastError":traffic_last_error,
+        "live":{
+            "rxRateBps":live_rx,
+            "txRateBps":live_tx,
+            "clients":live_rows
+        },
+        "usage":summary,
+        "dpi":dpi,
+        "visibility":{
+            "applications":True if private_api.configured else False,
+            "exactDestinations":False,
+            "detail":"Application/category visibility comes from UniFi DPI. Exact URLs and every encrypted remote destination are not available from the current data source."
+        }
+    })
 
 @app.route("/api/optimization-tests",methods=["GET","POST"])
 def optimization_tests():
