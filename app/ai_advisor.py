@@ -97,6 +97,7 @@ def build_ai_input(context):
             "dpi":traffic.get("dpi"),
         },
         "optimizationTests":context.get("optimizationTests") or [],
+        "automationState":context.get("automationState") or {},
         "channelPlan":context.get("channelPlan") or {},
     }
     return json.dumps(compact,separators=(",",":"),default=str)
@@ -123,6 +124,10 @@ Rules:
 - Prefer reversible, low-risk actions.
 - The AI is advisory. Do not claim that you changed any setting.
 - When a deterministic automation already exists (Auto RF or Auto Optimize), say whether it is a suitable execution path.
+- Treat channelPlan.automaticRadioWritesAvailable as describing the supported official API only. Use automationState to determine whether the validated private/classic Auto RF path is actually available.
+- Use optimizationTests as historical evidence. Do not recommend repeating a previously completed WORSE_CONFIRMED, WORSE_TOPOLOGY, INVALID_NO_CHANGE, or clearly worse test unless you can identify a materially changed condition and explain why a retest is justified.
+- If a prior RF test already produced a confirmed result, prefer that evidence over a generic planner recommendation.
+- Distinguish learned history since app restart from long-term evidence when the supplied data does not establish how long a counter has been observed.
 
 Return concise plain text with these sections:
 NETWORK STATUS
