@@ -2,8 +2,16 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.15.0
+## v0.16.0
 
+- WAN Quality page with continuous multi-target latency, packet-loss, jitter, gateway latency, and DNS reliability monitoring
+- Probes Cloudflare, Google, and Quad9 plus the local UDM gateway
+- ICMP samples run every 60 seconds with three probes per target; DNS samples run every 5 minutes
+- DNS monitoring compares the system resolver with Cloudflare and Google
+- Adds 1 hour / 24 hour / 7 day / 30 day WAN-quality ranges
+- Stores WAN probe history in SQLite using the existing retention policy
+- Includes a WAN quality score derived from reachability, latency, jitter, and DNS reliability
+- Separates local gateway latency from external Internet latency to make LAN-vs-WAN problems easier to distinguish
 - Traffic Analytics page with live per-client RX/TX rates, historical usage, AP/uplink, VLAN, and network breakdowns
 - Stores traffic counter deltas every 5 minutes so usage history survives dashboard reloads and container restarts
 - Adds 1 hour / 24 hour / 7 day / 30 day traffic ranges
@@ -145,3 +153,12 @@ Traffic history uses read-only client counters from UniFi's classic local API an
 Application visibility uses UniFi DPI through the classic stat/sitedpi endpoint when available. DPI can classify many applications and categories, but it does not expose or reliably identify every website, hostname, or encrypted remote destination. The dashboard does not guess when UniFi cannot identify traffic.
 
 RX/TX labels follow the counters reported by the UniFi controller. They are kept as controller-side RX/TX rather than silently relabeled as download/upload because direction semantics can vary by interface and controller context.
+
+
+## WAN quality monitoring
+
+WAN Quality is measured independently from the existing HTTPS connectivity probe and scheduled speed tests. The app sends small ICMP probe sets to Cloudflare (1.1.1.1), Google (8.8.8.8), and Quad9 (9.9.9.9), plus the local UDM gateway. It stores packet loss, min/average/max RTT, and jitter.
+
+DNS quality is sampled separately using the system resolver, Cloudflare DNS, and Google DNS. The dashboard stores success rate and DNS response latency.
+
+The WAN quality score is an app-level summary for trend spotting, not an ISP SLA certification. Raw latency, packet-loss, jitter, and DNS metrics remain visible alongside it.
