@@ -3,8 +3,12 @@ import threading
 import time
 import requests
 import speedtest
+import dns.resolver
+from ping3 import ping
 import traceback
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template, request
 
 from .database import Database
@@ -14,7 +18,7 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, buil
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.15.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.16.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -50,6 +54,140 @@ traffic_last_sample_monotonic = 0.0
 traffic_last_sample_at = None
 traffic_last_error = None
 dpi_reference_cache = {"ts":0.0,"categories":{},"apps":{}}
+wan_quality_sample_seconds = 60
+wan_dns_sample_seconds = 300
+wan_last_sample_monotonic = 0.0
+wan_dns_last_sample_monotonic = 0.0
+wan_last_sample_at = None
+wan_last_error = None
+
+def _wan_targets():
+    gateway=urlparse(UNIFI_URL).hostname
+    targets=[
+        {"key":"cloudflare","name":"Cloudflare","host":"1.1.1.1","type":"INTERNET"},
+        {"key":"google","name":"Google","host":"8.8.8.8","type":"INTERNET"},
+        {"key":"quad9","name":"Quad9","host":"9.9.9.9","type":"INTERNET"},
+    ]
+    if gateway:
+        targets.insert(0,{"key":"gateway","name":"Gateway","host":gateway,"type":"GATEWAY"})
+    return targets
+
+def _ping_probe(target, count=3, timeout=1.0):
+    rtts=[]
+    errors=[]
+    for _ in range(count):
+        try:
+            value=ping(target["host"],timeout=timeout,unit="ms")
+            if value is not None:
+                rtts.append(float(value))
+        except Exception as e:
+            errors.append(str(e))
+    received=len(rtts)
+    loss=(1.0-(received/float(count)))*100.0 if count else 100.0
+    jitter=None
+    if len(rtts)>=2:
+        jitter=sum(abs(rtts[i]-rtts[i-1]) for i in range(1,len(rtts)))/(len(rtts)-1)
+    return {
+        "target":target,
+        "sent":count,
+        "received":received,
+        "packetLossPct":loss,
+        "minMs":min(rtts) if rtts else None,
+        "avgMs":sum(rtts)/len(rtts) if rtts else None,
+        "maxMs":max(rtts) if rtts else None,
+        "jitterMs":jitter,
+        "error":"; ".join(errors[:2]) if errors and not rtts else None,
+    }
+
+def _dns_probe(key, name, nameserver=None, query_name="example.com"):
+    started=time.perf_counter()
+    try:
+        resolver=dns.resolver.Resolver(configure=nameserver is None)
+        if nameserver is not None:
+            resolver.nameservers=[nameserver]
+        resolver.timeout=2.0
+        resolver.lifetime=2.0
+        answer=resolver.resolve(query_name,"A",raise_on_no_answer=False)
+        latency=(time.perf_counter()-started)*1000.0
+        count=len(answer) if answer.rrset is not None else 0
+        return {
+            "key":key,"name":name,"host":nameserver,
+            "queryName":query_name,"success":True,
+            "latencyMs":latency,"answers":count,"error":None
+        }
+    except Exception as e:
+        return {
+            "key":key,"name":name,"host":nameserver,
+            "queryName":query_name,"success":False,
+            "latencyMs":None,"answers":0,"error":str(e)
+        }
+
+def _sample_wan_quality():
+    global wan_last_sample_monotonic,wan_dns_last_sample_monotonic,wan_last_sample_at,wan_last_error
+    errors=[]
+    targets=_wan_targets()
+    try:
+        with ThreadPoolExecutor(max_workers=len(targets)) as executor:
+            futures=[executor.submit(_ping_probe,t) for t in targets]
+            for future in as_completed(futures):
+                result=future.result()
+                t=result["target"]
+                db.record_wan_ping(
+                    t["key"],t["name"],t["host"],t["type"],
+                    result["sent"],result["received"],result["packetLossPct"],
+                    result["minMs"],result["avgMs"],result["maxMs"],result["jitterMs"],
+                    result["error"]
+                )
+                if result.get("error"):
+                    errors.append(t["name"]+": "+result["error"])
+        wan_last_sample_monotonic=time.monotonic()
+        wan_last_sample_at=datetime.now(timezone.utc).isoformat()
+
+        if (time.monotonic()-wan_dns_last_sample_monotonic) >= wan_dns_sample_seconds:
+            resolvers=[
+                ("system","System DNS",None),
+                ("cloudflare","Cloudflare DNS","1.1.1.1"),
+                ("google","Google DNS","8.8.8.8"),
+            ]
+            with ThreadPoolExecutor(max_workers=len(resolvers)) as executor:
+                futures=[executor.submit(_dns_probe,*x) for x in resolvers]
+                for future in as_completed(futures):
+                    result=future.result()
+                    db.record_wan_dns(
+                        result["key"],result["name"],result["host"],result["queryName"],
+                        result["success"],result["latencyMs"],result["answers"],result["error"]
+                    )
+                    if result.get("error"):
+                        errors.append(result["name"]+": "+result["error"])
+            wan_dns_last_sample_monotonic=time.monotonic()
+
+        wan_last_error=" | ".join(errors[:4]) if errors else None
+    except Exception as e:
+        wan_last_error=str(e)
+        print("WAN quality sampling error:",e,flush=True)
+
+def _wan_quality_score(summary):
+    score=100.0
+    reach=summary.get("reachabilityPct")
+    latency=summary.get("avgLatencyMs")
+    jitter=summary.get("avgJitterMs")
+    dns_success=summary.get("dnsSuccessPct")
+    dns_latency=summary.get("dnsAvgLatencyMs")
+
+    if reach is not None:
+        score -= max(0.0,100.0-float(reach))*4.0
+    if latency is not None:
+        if latency>20:
+            score -= min(20.0,(float(latency)-20.0)/4.0)
+        if latency>100:
+            score -= min(15.0,(float(latency)-100.0)/10.0)
+    if jitter is not None and jitter>5:
+        score -= min(20.0,(float(jitter)-5.0)*1.5)
+    if dns_success is not None:
+        score -= max(0.0,100.0-float(dns_success))*2.0
+    if dns_latency is not None and dns_latency>50:
+        score -= min(10.0,(float(dns_latency)-50.0)/15.0)
+    return max(0,min(100,round(score)))
 
 def _norm_mac(value):
     return str(value or "").lower().replace("-",":").strip()
@@ -849,7 +987,7 @@ def probe_internet():
         return False, None
 
 def monitor_loop():
-    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic
+    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic,wan_last_sample_monotonic
     elapsed=0
     while True:
         try:
@@ -967,6 +1105,26 @@ def speedtest_settings():
         except Exception:
             return jsonify({"ok":False,"error":"Invalid speed test interval"}),400
     return jsonify({"ok":True,**_speedtest_state()})
+
+@app.route("/api/wan-quality")
+def wan_quality():
+    try:
+        hours=int(request.args.get("hours","24"))
+    except Exception:
+        hours=24
+    if hours not in (1,24,168,720):
+        hours=24
+    summary=db.wan_quality_summary(hours)
+    return jsonify({
+        "ok":True,
+        **summary,
+        "score":_wan_quality_score(summary),
+        "sampleIntervalSeconds":wan_quality_sample_seconds,
+        "dnsSampleIntervalSeconds":wan_dns_sample_seconds,
+        "lastSampleAt":wan_last_sample_at,
+        "lastError":wan_last_error,
+        "targets":summary.get("targets") or [],
+    })
 
 @app.route("/api/traffic")
 def traffic_data():
