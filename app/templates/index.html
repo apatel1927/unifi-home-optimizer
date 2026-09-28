@@ -344,13 +344,29 @@
 
       <div id="speedtestNotice" class="panel notice speedtest-notice">Loading speed test status…</div>
       <div class="panel notice speedtest-server-note">
-        The Speedtest.net-compatible server is selected automatically for each run using the speedtest client&apos;s best-server selection. The exact server, sponsor, location and distance used for the completed test are stored with that result and shown below.
+        Tests now use the official Ookla Speedtest CLI. By default Ookla chooses a nearby server using its native selection logic. You can optionally lock testing to one server from the nearby-server list below.
+      </div>
+
+      <div class="panel speedtest-server-controls">
+        <div>
+          <h3>Speed test server</h3>
+          <p class="muted">Automatic is recommended. If your ISP IP is geolocated incorrectly, choose a known nearby server and the app will use that server for automatic and manual tests.</p>
+        </div>
+        <div class="speedtest-server-picker">
+          <select id="speedtestPreferredServer" class="search">
+            <option value="">Automatic · Ookla nearby selection</option>
+          </select>
+          <button id="loadSpeedtestServersBtn" class="secondary">Load nearby servers</button>
+        </div>
+        <div id="speedtestServerSelectionStatus" class="muted">Official Ookla CLI</div>
       </div>
 
       <div class="summary-grid">
         <div class="summary-card"><h3>Download</h3><div id="speedtestDownload" class="big">—</div><div class="muted">Latest successful test</div></div>
         <div class="summary-card"><h3>Upload</h3><div id="speedtestUpload" class="big">—</div><div class="muted">Latest successful test</div></div>
         <div class="summary-card"><h3>Ping</h3><div id="speedtestPing" class="big">—</div><div class="muted">Speed test server latency</div></div>
+        <div class="summary-card"><h3>Jitter</h3><div id="speedtestJitter" class="big">—</div><div class="muted">Latest successful test</div></div>
+        <div class="summary-card"><h3>Packet loss</h3><div id="speedtestPacketLoss" class="big">—</div><div class="muted">Latest successful test</div></div>
         <div class="summary-card"><h3>Server</h3><div id="speedtestServer" class="big compact-big">—</div><div id="speedtestServerDetail" class="muted">—</div></div>
         <div class="summary-card"><h3>Last test</h3><div id="speedtestLastRun" class="big compact-big">—</div><div id="speedtestLastDuration" class="muted">—</div></div>
         <div class="summary-card"><h3>Next automatic test</h3><div id="speedtestNextRun" class="big compact-big">—</div><div class="muted">Based on selected interval</div></div>
@@ -375,7 +391,7 @@
       </div>
       <div class="panel table-wrap">
         <table>
-          <thead><tr><th>Date & time</th><th>Download</th><th>Upload</th><th>Ping</th><th>Server</th><th>Duration</th><th>Status</th></tr></thead>
+          <thead><tr><th>Date & time</th><th>Download</th><th>Upload</th><th>Ping</th><th>Jitter</th><th>Loss</th><th>Server</th><th>Duration</th><th>Status</th></tr></thead>
           <tbody id="speedtestHistoryTable"></tbody>
         </table>
       </div>
