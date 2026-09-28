@@ -83,7 +83,7 @@ async function loadReport(){
     document.getElementById("internetSummary").textContent=internetLatest?(internetLatest.online?"ONLINE":"OFFLINE"):"LEARNING";
     document.getElementById("internetSummary").className=internetLatest?(internetLatest.online?"good":"bad"):"info";
     document.getElementById("autoToggle").checked=d.autoOptimizeEnabled;
-    renderOverview();renderAPs();renderBroadcasts();renderClients();renderSwitches();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);renderChannelPlan(d.channelPlan);renderOptimizationTests(d.optimizationTests||[]);
+    renderOverview();renderAPs();renderBroadcasts();renderClients();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);renderChannelPlan(d.channelPlan);renderOptimizationTests(d.optimizationTests||[]);
   }catch(e){
     document.getElementById("controllerPill").textContent="Controller error";
     document.getElementById("controllerPill").className="pill bad";
