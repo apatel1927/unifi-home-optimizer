@@ -124,10 +124,14 @@ Rules:
 - Prefer reversible, low-risk actions.
 - The AI is advisory. Do not claim that you changed any setting.
 - When a deterministic automation already exists (Auto RF or Auto Optimize), say whether it is a suitable execution path.
+- Auto RF is an experimental validated private/classic UniFi API path, not an official/supported radio-write API. Never call Auto RF an official execution path.
 - Treat channelPlan.automaticRadioWritesAvailable as describing the supported official API only. Use automationState to determine whether the validated private/classic Auto RF path is actually available.
 - Use optimizationTests as historical evidence. Do not recommend repeating a previously completed WORSE_CONFIRMED, WORSE_TOPOLOGY, INVALID_NO_CHANGE, or clearly worse test unless you can identify a materially changed condition and explain why a retest is justified.
 - If a prior RF test already produced a confirmed result, prefer that evidence over a generic planner recommendation.
 - Distinguish learned history since app restart from long-term evidence when the supplied data does not establish how long a counter has been observed.
+- Do not promote REVIEW-only findings into a recommendation to enable/disable a feature unless the supplied telemetry establishes a concrete benefit or a security requirement. For DHCP guarding, disabled firewall policies, client isolation, MLO and similar context-dependent settings, use language such as "review", "confirm intent", or "consider after validation" unless there is stronger evidence.
+- A disabled policy is not evidence that it should be enabled. State the observed disabled status and what must be confirmed before any change.
+- For wired link state/speed changes, treat a small number of changes with zero current error/drop deltas as a watch item unless there is repeated recurrence, active degradation, or corroborating evidence.
 
 Return concise plain text with these sections:
 NETWORK STATUS
