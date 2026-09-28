@@ -75,15 +75,22 @@ def _counter(p, keys):
 def _poe_info(p):
     enabled=_first(p,("poe_enable","poeEnabled","poe_enabled"))
     mode=_first(p,("poe_mode","poeMode"))
-    good=_first(p,("poe_good","poeGood"))
     power=_num(_first(p,("poe_power","poePower","poe_power_w","poePowerW")))
     voltage=_num(_first(p,("poe_voltage","poeVoltage")))
     current=_num(_first(p,("poe_current","poeCurrent")))
-    if good is False:
+    explicit_fault=_first(p,(
+        "poe_fault","poeFault","poe_fault_status","poeFaultStatus",
+        "poe_overload","poeOverload","poe_error","poeError"
+    ))
+    mode_text=str(mode or "").lower()
+
+    # Some UniFi classic payloads expose poe_good=false on ports that are merely
+    # not delivering power. Do not treat that field alone as a fault.
+    if explicit_fault not in (None,False,0,"","none","NONE","ok","OK"):
         state="FAULT"
     elif power is not None and power>0:
         state="POWERING"
-    elif enabled is True or str(mode or "").lower() not in ("","off","disabled"):
+    elif enabled is True or mode_text not in ("","off","disabled","none"):
         state="ENABLED"
     else:
         state="OFF"
@@ -101,7 +108,8 @@ def _likely_low_speed_endpoint(name, network):
     hints=(
         "iot","cctv","camera","doorbell","thermostat","security","alarm",
         "garage","opener","washer","dryer","refrigerator","microwave",
-        "roku","tv","door","backyard","driveway"
+        "roku","tv","door","backyard","driveway","lutron","hub","bridge",
+        "mag","stream","media","receiver","speaker","smart"
     )
     return any(x in text for x in hints)
 
@@ -183,11 +191,12 @@ def _build_endpoint_maps(snapshot, classic_clients, classic_devices):
     return clients,children
 
 
-def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, event_summary=None, recent_events=None):
+def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, event_summary=None, recent_events=None, counter_summary=None):
     classic_devices=classic_devices or []
     classic_clients=classic_clients or []
     event_summary=event_summary or {}
     recent_events=recent_events or []
+    counter_summary=counter_summary or {}
 
     devices=snapshot.get("devices") or []
     official_by_mac={_norm_mac(d.get("macAddress") or d.get("mac")):d for d in devices if d.get("macAddress") or d.get("mac")}
@@ -203,14 +212,21 @@ def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, even
             continue
         mac=_norm_mac(device.get("macAddress") or device.get("mac"))
         classic=classic_by_mac.get(mac) or {}
-        raw_ports=classic.get("port_table") or ((device.get("interfaces") or {}).get("ports") or [])
+        official_ports=((device.get("interfaces") or {}).get("ports") or [])
+        official_port_map={_port_idx(op):op for op in official_ports if _port_idx(op) is not None}
+        raw_ports=classic.get("port_table") or official_ports
         for p in raw_ports:
             idx=_port_idx(p)
             if idx is None:
                 continue
+            official_port=official_port_map.get(idx) or {}
             state=_port_state(p)
             speed=_port_speed(p)
+            if speed is None:
+                speed=_port_speed(official_port)
             max_speed=_port_max_speed(p)
+            if max_speed is None:
+                max_speed=_port_max_speed(official_port)
             endpoint=child_map.get((mac,idx)) or client_map.get((mac,idx))
             poe=_poe_info(p)
             if poe.get("state")=="POWERING":
@@ -220,10 +236,14 @@ def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, even
             tx_errors=_counter(p,("tx_errors","txErrors","tx_error","txErrorCount"))
             rx_drops=_counter(p,("rx_dropped","rxDrops","rx_drop","rxDropped"))
             tx_drops=_counter(p,("tx_dropped","txDrops","tx_drop","txDropped"))
-            total_errors=sum(x or 0 for x in (rx_errors,tx_errors,rx_drops,tx_drops))
+            cumulative_errors=sum(x or 0 for x in (rx_errors,tx_errors))
+            cumulative_drops=sum(x or 0 for x in (rx_drops,tx_drops))
 
             key=f"{device.get('id')}:{idx}"
             events=event_summary.get(key) or {}
+            counters_now=counter_summary.get(key) or {}
+            error_delta=int(counters_now.get("errorDelta") or 0)
+            drop_delta=int(counters_now.get("dropDelta") or 0)
             state_changes=int(events.get("stateChanges") or 0)
             speed_changes=int(events.get("speedChanges") or 0)
 
@@ -245,12 +265,12 @@ def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, even
                     status="REVIEW"
                     reason=f"Port changed state {state_changes} times and speed {speed_changes} times in the last 24 hours."
                     counters["flapping"]+=1
-                elif total_errors>=1000:
+                elif error_delta>=1000 or drop_delta>=5000:
                     status="WARNING"
-                    reason=f"Port reports {total_errors} cumulative errors/drops."
-                elif total_errors>=100:
+                    reason=f"Port added {error_delta} error(s) and {drop_delta} drop(s) since the last monitor sample."
+                elif error_delta>=100 or drop_delta>=500:
                     status="REVIEW"
-                    reason=f"Port reports {total_errors} cumulative errors/drops."
+                    reason=f"Port added {error_delta} error(s) and {drop_delta} drop(s) since the last monitor sample."
                 elif speed is not None and speed<=100:
                     if endpoint and endpoint.get("type")=="UNIFI_DEVICE":
                         status="WARNING"
@@ -283,7 +303,7 @@ def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, even
                 "deviceModel":device.get("model"),
                 "deviceMac":mac,
                 "portIdx":idx,
-                "portName":_first(p,("name","port_name","portName")),
+                "portName":_first(p,("name","port_name","portName")) or _first(official_port,("name","port_name","portName","connector")),
                 "state":state,
                 "speedMbps":speed,
                 "maxSpeedMbps":max_speed,
@@ -295,6 +315,11 @@ def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, even
                 "txErrors":tx_errors,
                 "rxDrops":rx_drops,
                 "txDrops":tx_drops,
+                "cumulativeErrors":cumulative_errors,
+                "cumulativeDrops":cumulative_drops,
+                "errorDelta":error_delta,
+                "dropDelta":drop_delta,
+                "counterSampleAt":counters_now.get("sampleAt"),
                 "poeState":poe.get("state"),
                 "poePowerW":poe.get("powerW"),
                 "poeVoltageV":poe.get("voltageV"),
