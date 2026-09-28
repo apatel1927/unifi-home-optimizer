@@ -2,8 +2,14 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.17.0
+## v0.18.0
 
+- Read-only Network Audit page checks security, firewall, segmentation, Wi-Fi, wired links, WAN, DHCP/DNS and device health
+- Category scorecards for Security, Firewall, Segmentation, Wi-Fi, Wired, WAN, DHCP/DNS and Device Health
+- Findings use PASS / REVIEW / WARNING / CRITICAL so context-dependent settings are not mislabeled as failures
+- Audit checks include duplicate active IPs, offline devices, firmware availability, high CPU/memory, Wi-Fi security modes, 6 GHz security consistency, MLO readiness, BSS Transition, Band Steering, DHCP guarding, broad firewall allows, disabled policies/rules, VLAN presence and obvious link-speed mismatches
+- Configuration inventory summarizes networks, SSIDs, firewall/ACL objects, WAN interfaces and DNS policies
+- Audit is intentionally read-only; firewall/VLAN/security changes are never applied automatically
 - Live Network Topology page builds the current Internet -> UDM -> switch/AP -> client tree from UniFi uplink relationships
 - Topology shows device state, model, IP, AP radio channels/widths, client counts, and downstream device counts
 - Client nodes show IP, type, VLAN, network, and SSID when available
@@ -177,3 +183,12 @@ The Topology page uses device uplink relationships returned by UniFi to build a 
 ## Speed test server selection
 
 Each speed test creates a Speedtest client and calls get_best_server before download/upload testing. The selected Speedtest.net-compatible server can therefore change between runs. The completed result stores the exact server name/location, sponsor, server ID, distance, and ping when returned by the test service.
+
+
+## Network audit
+
+The Network Audit page performs a read-only review of the current UniFi configuration and health data. Findings are deliberately separated into PASS, REVIEW, WARNING, and CRITICAL. REVIEW means the setting is context-dependent and should be confirmed rather than automatically changed.
+
+The first audit release checks device health, firmware availability, duplicate active IPs, VLAN/network inventory, DHCP guarding, Wi-Fi security, 6 GHz consistency, MLO readiness, BSS Transition, Band Steering, client isolation context, radio-width sanity, obvious wired negotiation mismatches, firewall/ACL inventory, broad allow policies, WAN interfaces, and DNS policy inventory.
+
+Future audit releases can add port-forward/UPnP exposure, deeper switch error/PoE analysis, remote-access posture, VPN posture and change auditing as those data sources are verified.
