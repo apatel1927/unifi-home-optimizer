@@ -999,6 +999,8 @@ def monitor_loop():
                 db.record_wireless_clients(data["clients"])
                 if (time.monotonic()-traffic_last_sample_monotonic) >= traffic_sample_interval_seconds:
                     _sample_traffic(data)
+                if (time.monotonic()-wan_last_sample_monotonic) >= wan_quality_sample_seconds:
+                    _sample_wan_quality()
                 analysis=data.get("analysis") or {}
                 db.record_health_score(
                     analysis.get("healthScore",0),
