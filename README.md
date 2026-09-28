@@ -2,8 +2,16 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.14.0
+## v0.15.0
 
+- Traffic Analytics page with live per-client RX/TX rates, historical usage, AP/uplink, VLAN, and network breakdowns
+- Stores traffic counter deltas every 5 minutes so usage history survives dashboard reloads and container restarts
+- Adds 1 hour / 24 hour / 7 day / 30 day traffic ranges
+- Tracks top clients, top VLANs, top networks, and top AP/uplink paths by data usage
+- Integrates UniFi classic DPI read-only endpoints for application/category traffic history
+- Shows top applications and application categories when UniFi DPI identifies them
+- Traffic client table supports search plus AP/uplink, VLAN, network, and usage sorting filters
+- Exact URLs and every encrypted destination are deliberately not inferred; unknown/private traffic remains unknown
 - Automatic Internet speed testing from the Unraid server with persistent download, upload, and ping history
 - Dedicated Speed Test page with Run Now, automatic enable/disable, and 1/3/6/12/24-hour intervals
 - Default automatic interval is 6 hours
@@ -128,3 +136,12 @@ Never commit your UniFi API key. Store it only in the Unraid container environme
 Automatic speed testing is enabled by default and runs every 6 hours. The interval can be changed from the Speed Test page without editing the container. Tests originate from the Unraid server, so they measure the server-to-Internet path rather than Wi-Fi performance of an individual client.
 
 A full speed test can transfer a meaningful amount of data, especially on fast Internet connections. Increase the interval if you want to reduce test traffic.
+
+
+## Traffic analytics
+
+Traffic history uses read-only client counters from UniFi's classic local API and stores five-minute deltas in SQLite. The Traffic page can summarize one hour, 24 hours, 7 days, or 30 days and break usage down by client, VLAN/network, and AP/uplink.
+
+Application visibility uses UniFi DPI through the classic stat/sitedpi endpoint when available. DPI can classify many applications and categories, but it does not expose or reliably identify every website, hostname, or encrypted remote destination. The dashboard does not guess when UniFi cannot identify traffic.
+
+RX/TX labels follow the counters reported by the UniFi controller. They are kept as controller-side RX/TX rather than silently relabeled as download/upload because direction semantics can vary by interface and controller context.
