@@ -10,6 +10,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="history") loadHistory();
     if(btn.dataset.page==="roaming") loadRoaming();
     if(btn.dataset.page==="internet") loadInternet();
+    if(btn.dataset.page==="traffic") loadTraffic();
     if(btn.dataset.page==="speedtest") loadSpeedtest();
     if(btn.dataset.page==="channels") loadChannelPlan();
     if(btn.dataset.page==="system") loadSystem();
@@ -50,7 +51,7 @@ function humanElapsed(iso){
 function fmtDateTime(v){try{return v?new Date(v).toLocaleString():"—"}catch{return "—"}}
 function bytes(v){
   if(v==null)return "—";
-  const units=["B","KB","MB","GB"];let n=Number(v),i=0;
+  const units=["B","KB","MB","GB","TB","PB"];let n=Number(v),i=0;
   while(n>=1024&&i<units.length-1){n/=1024;i++}
   return n.toFixed(i?1:0)+" "+units[i];
 }
@@ -485,6 +486,184 @@ async function loadInternet(){
   const d=await r.json();
   if(d.ok)renderInternet(d,report?.gateway);
 }
+
+
+let trafficData=null;
+
+function trafficRangeLabel(hours){
+  if(Number(hours)===1)return "last hour";
+  if(Number(hours)===24)return "last 24 hours";
+  if(Number(hours)===168)return "last 7 days";
+  if(Number(hours)===720)return "last 30 days";
+  return "selected period";
+}
+
+function trafficIpCompare(a,b){
+  const ap=clientIpParts(a||"");const bp=clientIpParts(b||"");
+  for(let i=0;i<Math.max(ap.length,bp.length);i++){
+    const x=ap[i]??"";const y=bp[i]??"";
+    if(x===y)continue;
+    return x<y?-1:1;
+  }
+  return 0;
+}
+
+function setTrafficSelectOptions(id,values,label){
+  const el=document.getElementById(id);
+  if(!el)return;
+  const current=el.value;
+  const unique=[...new Set(values.filter(v=>v!==null&&v!==undefined&&String(v)!=="").map(v=>String(v)))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+  el.innerHTML='<option value="">'+esc(label)+'</option>'+unique.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join("");
+  if(unique.includes(current))el.value=current;
+}
+
+function trafficFilteredClients(){
+  if(!trafficData)return [];
+  const rows=[...(trafficData.usage?.topClients||[])];
+  const q=(document.getElementById("trafficClientSearch")?.value||"").trim().toLowerCase();
+  const ap=document.getElementById("trafficApFilter")?.value||"";
+  const vlan=document.getElementById("trafficVlanFilter")?.value||"";
+  const network=document.getElementById("trafficNetworkFilter")?.value||"";
+  const sort=document.getElementById("trafficClientSort")?.value||"total-desc";
+
+  const filtered=rows.filter(x=>{
+    if(q && ![x.name,x.ip,x.mac].some(v=>String(v||"").toLowerCase().includes(q)))return false;
+    if(ap && String(x.uplink_name||"Unknown")!==ap)return false;
+    if(vlan && String(x.vlan_id??"Unknown")!==vlan)return false;
+    if(network && String(x.network_name||"Unknown")!==network)return false;
+    return true;
+  });
+
+  filtered.sort((a,b)=>{
+    if(sort==="total-desc")return Number(b.total_bytes||0)-Number(a.total_bytes||0);
+    if(sort==="total-asc")return Number(a.total_bytes||0)-Number(b.total_bytes||0);
+    if(sort==="rx-desc")return Number(b.rx_bytes||0)-Number(a.rx_bytes||0);
+    if(sort==="tx-desc")return Number(b.tx_bytes||0)-Number(a.tx_bytes||0);
+    if(sort==="ip-asc")return trafficIpCompare(a.ip,b.ip);
+    return String(a.name||a.mac||"").localeCompare(String(b.name||b.mac||""),undefined,{numeric:true,sensitivity:"base"});
+  });
+  return filtered;
+}
+
+function renderTrafficClients(){
+  const table=document.getElementById("trafficClientTable");
+  if(!table||!trafficData)return;
+  const rows=trafficFilteredClients();
+  table.innerHTML=rows.length?rows.map(x=>
+    '<tr>'+
+      '<td><b>'+esc(x.name||x.mac||"Unknown")+'</b><div class="muted">'+esc(x.mac||"")+'</div></td>'+
+      '<td class="client-ip">'+esc(x.ip||"—")+'</td>'+
+      '<td><span class="vlan-pill">VLAN '+esc(x.vlan_id??"Unknown")+'</span></td>'+
+      '<td>'+esc(x.network_name||"Unknown")+'</td>'+
+      '<td>'+esc(x.uplink_name||"Unknown")+'</td>'+
+      '<td>'+esc(bytes(x.rx_bytes||0))+'</td>'+
+      '<td>'+esc(bytes(x.tx_bytes||0))+'</td>'+
+      '<td><b>'+esc(bytes(x.total_bytes||0))+'</b></td>'+
+    '</tr>'
+  ).join(""):'<tr><td colspan="8"><div class="empty">No traffic records match the selected filters yet.</div></td></tr>';
+}
+
+function renderTraffic(d){
+  trafficData=d;
+  const usage=d.usage||{};
+  const totals=usage.totals||{};
+  const dpi=d.dpi||{};
+  const live=d.live||{};
+  const topClient=(usage.topClients||[])[0];
+  const topApp=(dpi.apps||[])[0];
+  const hours=d.hours||24;
+
+  const set=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=value};
+  set("trafficLiveRx",rateMbps(live.rxRateBps||0));
+  set("trafficLiveTx",rateMbps(live.txRateBps||0));
+  const total=Number(totals.rx_bytes||0)+Number(totals.tx_bytes||0);
+  set("trafficTotalUsage",bytes(total));
+  set("trafficTotalUsageDetail",trafficRangeLabel(hours)+" · RX "+bytes(totals.rx_bytes||0)+" · TX "+bytes(totals.tx_bytes||0));
+  set("trafficClientCount",String(totals.client_count||0));
+  set("trafficTopClient",topClient?(topClient.name||topClient.mac||"Unknown"):"—");
+  set("trafficTopClientUsage",topClient?bytes(topClient.total_bytes||0)+" in "+trafficRangeLabel(hours):"Learning…");
+  set("trafficTopApp",topApp?(topApp.app_name||"Unknown"):"—");
+  set("trafficTopAppUsage",topApp?bytes(topApp.total_bytes||0)+" · "+(topApp.category_name||"Unknown"):"Learning DPI…");
+
+  const notice=document.getElementById("trafficNotice");
+  if(notice){
+    if(!d.privateConfigured){
+      notice.innerHTML='<b class="warn">Traffic details unavailable</b><br><span class="muted">The local UniFi private API credentials are required for per-client counters and DPI analytics.</span>';
+    }else if(d.lastError){
+      notice.innerHTML='<b class="warn">Traffic collector reported an error</b><br><span class="muted">'+esc(d.lastError)+'</span>';
+    }else{
+      notice.innerHTML='<b class="good">Traffic monitoring active</b><br><span class="muted">Samples every '+Math.round(Number(d.sampleIntervalSeconds||300)/60)+' minutes · last sample '+esc(d.lastSampleAt?fmtDateTime(d.lastSampleAt):"learning")+'. RX/TX follow the controller counters; exact encrypted destinations are not inferred.</span>';
+    }
+  }
+
+  const series=usage.series||[];
+  const rx=series.map(x=>Number(x.rx_bytes||0));
+  const tx=series.map(x=>Number(x.tx_bytes||0));
+  const max=Math.max(1,...rx,...tx);
+  const chart=document.getElementById("trafficUsageChart");
+  if(chart)chart.innerHTML=chartGrid()+svgLine(rx,max,"chart-line-rx")+svgLine(tx,max,"chart-line-tx");
+
+  const cats=dpi.categories||[];
+  const catBox=document.getElementById("trafficCategoryBars");
+  if(catBox){
+    const maxCat=Math.max(1,...cats.slice(0,8).map(x=>Number(x.total_bytes||0)));
+    catBox.innerHTML=cats.length?cats.slice(0,8).map(x=>{
+      const pct=Math.max(2,Math.min(100,(Number(x.total_bytes||0)/maxCat)*100));
+      return '<div class="traffic-bar-row"><div class="traffic-bar-label"><span>'+esc(x.category_name||"Unknown")+'</span><b>'+esc(bytes(x.total_bytes||0))+'</b></div><div class="traffic-bar-track"><div class="traffic-bar-fill" style="width:'+pct.toFixed(1)+'%"></div></div></div>';
+    }).join(""):'<div class="empty">DPI history is learning. Application totals will appear after at least two traffic samples.</div>';
+  }
+
+  setTrafficSelectOptions("trafficApFilter",(usage.topClients||[]).map(x=>x.uplink_name||"Unknown"),"All APs / uplinks");
+  setTrafficSelectOptions("trafficVlanFilter",(usage.topClients||[]).map(x=>x.vlan_id??"Unknown"),"All VLANs");
+  setTrafficSelectOptions("trafficNetworkFilter",(usage.topClients||[]).map(x=>x.network_name||"Unknown"),"All networks");
+  renderTrafficClients();
+
+  const vlanTable=document.getElementById("trafficVlanTable");
+  if(vlanTable){
+    const rows=usage.topVlans||[];
+    vlanTable.innerHTML=rows.length?rows.map(x=>
+      '<tr><td><span class="vlan-pill">VLAN '+esc(x.vlan_id??"Unknown")+'</span></td><td>'+esc(x.network_name||"Unknown")+'</td><td>'+esc(x.client_count||0)+'</td><td>'+esc(bytes(x.rx_bytes||0))+'</td><td>'+esc(bytes(x.tx_bytes||0))+'</td><td><b>'+esc(bytes(x.total_bytes||0))+'</b></td></tr>'
+    ).join(""):'<tr><td colspan="6"><div class="empty">No VLAN usage history yet.</div></td></tr>';
+  }
+
+  const uplinkTable=document.getElementById("trafficUplinkTable");
+  if(uplinkTable){
+    const rows=usage.topUplinks||[];
+    uplinkTable.innerHTML=rows.length?rows.map(x=>
+      '<tr><td>'+esc(x.uplink_name||"Unknown")+'</td><td>'+esc(x.client_count||0)+'</td><td>'+esc(bytes(x.rx_bytes||0))+'</td><td>'+esc(bytes(x.tx_bytes||0))+'</td><td><b>'+esc(bytes(x.total_bytes||0))+'</b></td></tr>'
+    ).join(""):'<tr><td colspan="5"><div class="empty">No AP/uplink usage history yet.</div></td></tr>';
+  }
+
+  const appTable=document.getElementById("trafficAppTable");
+  if(appTable){
+    const rows=dpi.apps||[];
+    appTable.innerHTML=rows.length?rows.map(x=>
+      '<tr><td><b>'+esc(x.app_name||"Unknown")+'</b></td><td>'+esc(x.category_name||"Unknown")+'</td><td>'+esc(bytes(x.rx_bytes||0))+'</td><td>'+esc(bytes(x.tx_bytes||0))+'</td><td><b>'+esc(bytes(x.total_bytes||0))+'</b></td></tr>'
+    ).join(""):'<tr><td colspan="5"><div class="empty">UniFi DPI application history is still learning or DPI did not return classified traffic.</div></td></tr>';
+  }
+}
+
+async function loadTraffic(){
+  const hours=Number(document.getElementById("trafficRange")?.value||24);
+  try{
+    const r=await fetch("/api/traffic?hours="+encodeURIComponent(hours),{cache:"no-store"});
+    const d=await r.json();
+    if(d.ok)renderTraffic(d);
+  }catch(e){
+    const notice=document.getElementById("trafficNotice");
+    if(notice)notice.innerHTML='<b class="warn">Unable to load traffic analytics</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }
+}
+
+document.getElementById("trafficRange")?.addEventListener("change",loadTraffic);
+["trafficClientSearch","trafficApFilter","trafficVlanFilter","trafficNetworkFilter","trafficClientSort"].forEach(id=>{
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.addEventListener(id==="trafficClientSearch"?"input":"change",renderTrafficClients);
+});
+setInterval(()=>{
+  if(document.querySelector("#traffic.page.active"))loadTraffic();
+},30000);
 
 
 function fmtMbps(v){
