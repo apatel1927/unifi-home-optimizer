@@ -2,8 +2,11 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.20.2
+## v0.20.3
 
+- AI wording now distinguishes validated private/classic Auto RF from the separate official API limitations
+- REVIEW-only findings such as DHCP guarding, disabled policies, client isolation and MLO are no longer promoted into enable/disable recommendations without stronger evidence
+- Small wired state/speed-change counts with zero current error/drop deltas are treated as watch items unless they recur or have corroborating evidence
 - AI defer messages now remain visible instead of flashing away
 - When an RF A/B/A test blocks AI analysis, the Export / AI page shows the exact AP, band and test status causing the deferral
 - Fixes a short AI launch-state race so the button remains in STARTING/RUNNING state from click through completion
