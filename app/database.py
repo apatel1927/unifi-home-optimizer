@@ -227,6 +227,35 @@ class Database:
         );
         CREATE INDEX IF NOT EXISTS idx_speedtest_results_ts
             ON speedtest_results(ts);
+        CREATE TABLE IF NOT EXISTS wired_port_state(
+            device_id TEXT NOT NULL,
+            device_name TEXT,
+            port_idx INTEGER NOT NULL,
+            state TEXT,
+            speed_mbps REAL,
+            endpoint_key TEXT,
+            endpoint_name TEXT,
+            poe_state TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            last_change TEXT NOT NULL,
+            PRIMARY KEY(device_id,port_idx)
+        );
+        CREATE TABLE IF NOT EXISTS wired_port_events(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            device_name TEXT,
+            port_idx INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            from_value TEXT,
+            to_value TEXT,
+            endpoint_name TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_wired_port_events_ts
+            ON wired_port_events(ts);
+        CREATE INDEX IF NOT EXISTS idx_wired_port_events_device_port_ts
+            ON wired_port_events(device_id,port_idx,ts);
         CREATE TABLE IF NOT EXISTS health_history(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -581,9 +610,122 @@ class Database:
         c.close()
 
 
+    def record_wired_ports(self, ports):
+        if not ports:
+            return
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        for p in ports:
+            device_id=str(p.get("deviceId") or "")
+            port_idx=p.get("portIdx")
+            if not device_id or port_idx is None:
+                continue
+            try:
+                port_idx=int(port_idx)
+            except Exception:
+                continue
+            state=str(p.get("state") or "UNKNOWN")
+            speed=p.get("speedMbps")
+            endpoint_key=str(p.get("endpointKey") or "")
+            endpoint_name=p.get("endpointName")
+            poe_state=str(p.get("poeState") or "")
+            prev=c.execute("""
+                SELECT * FROM wired_port_state
+                WHERE device_id=? AND port_idx=?
+            """,(device_id,port_idx)).fetchone()
+
+            if prev is None:
+                c.execute("""
+                    INSERT INTO wired_port_state(
+                        device_id,device_name,port_idx,state,speed_mbps,
+                        endpoint_key,endpoint_name,poe_state,first_seen,last_seen,last_change
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,(
+                    device_id,p.get("deviceName"),port_idx,state,speed,
+                    endpoint_key,endpoint_name,poe_state,now,now,now
+                ))
+                continue
+
+            changes=[]
+            if str(prev["state"] or "")!=state:
+                changes.append(("STATE",prev["state"],state))
+            prev_speed=prev["speed_mbps"]
+            if (prev_speed is None) != (speed is None) or (
+                prev_speed is not None and speed is not None and float(prev_speed)!=float(speed)
+            ):
+                changes.append(("SPEED",prev_speed,speed))
+            if str(prev["endpoint_key"] or "")!=endpoint_key:
+                changes.append(("ENDPOINT",prev["endpoint_name"],endpoint_name))
+
+            last_change=prev["last_change"]
+            if changes:
+                last_change=now
+                for event_type,from_value,to_value in changes:
+                    c.execute("""
+                        INSERT INTO wired_port_events(
+                            ts,device_id,device_name,port_idx,event_type,
+                            from_value,to_value,endpoint_name
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                    """,(
+                        now,device_id,p.get("deviceName"),port_idx,event_type,
+                        None if from_value is None else str(from_value),
+                        None if to_value is None else str(to_value),
+                        endpoint_name
+                    ))
+
+            c.execute("""
+                UPDATE wired_port_state
+                SET device_name=?,state=?,speed_mbps=?,endpoint_key=?,endpoint_name=?,
+                    poe_state=?,last_seen=?,last_change=?
+                WHERE device_id=? AND port_idx=?
+            """,(
+                p.get("deviceName"),state,speed,endpoint_key,endpoint_name,
+                poe_state,now,last_change,device_id,port_idx
+            ))
+
+        c.execute("DELETE FROM wired_port_events WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def wired_port_event_summary(self, hours=24):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+        rows=c.execute("""
+            SELECT device_id,device_name,port_idx,
+                   SUM(CASE WHEN event_type='STATE' THEN 1 ELSE 0 END) AS state_changes,
+                   SUM(CASE WHEN event_type='SPEED' THEN 1 ELSE 0 END) AS speed_changes,
+                   SUM(CASE WHEN event_type='ENDPOINT' THEN 1 ELSE 0 END) AS endpoint_changes,
+                   MAX(ts) AS last_event
+            FROM wired_port_events
+            WHERE ts>=?
+            GROUP BY device_id,device_name,port_idx
+        """,(cutoff,)).fetchall()
+        c.close()
+        return {
+            f"{r['device_id']}:{r['port_idx']}":{
+                "stateChanges":r["state_changes"] or 0,
+                "speedChanges":r["speed_changes"] or 0,
+                "endpointChanges":r["endpoint_changes"] or 0,
+                "lastEvent":r["last_event"],
+            } for r in rows
+        }
+
+    def wired_recent_events(self, hours=24, limit=200):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+        rows=c.execute("""
+            SELECT * FROM wired_port_events
+            WHERE ts>=?
+            ORDER BY id DESC
+            LIMIT ?
+        """,(cutoff,limit)).fetchall()
+        c.close()
+        return [dict(r) for r in rows]
+
     def database_stats(self):
         c=self.connect()
-        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples","wan_ping_samples","wan_dns_samples"]
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples","wan_ping_samples","wan_dns_samples","wired_port_state","wired_port_events"]
         counts={}
         for table in tables:
             try:
