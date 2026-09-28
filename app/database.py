@@ -236,6 +236,13 @@ class Database:
             endpoint_key TEXT,
             endpoint_name TEXT,
             poe_state TEXT,
+            rx_errors INTEGER,
+            tx_errors INTEGER,
+            rx_drops INTEGER,
+            tx_drops INTEGER,
+            error_delta INTEGER NOT NULL DEFAULT 0,
+            drop_delta INTEGER NOT NULL DEFAULT 0,
+            counter_sample_at TEXT,
             first_seen TEXT NOT NULL,
             last_seen TEXT NOT NULL,
             last_change TEXT NOT NULL,
@@ -298,6 +305,20 @@ class Database:
         for col, ddl in test_migrations.items():
             if col not in test_cols:
                 c.execute(f"ALTER TABLE optimization_tests ADD COLUMN {col} {ddl}")
+
+        wired_cols = {row[1] for row in c.execute("PRAGMA table_info(wired_port_state)").fetchall()}
+        wired_migrations = {
+            "rx_errors":"INTEGER",
+            "tx_errors":"INTEGER",
+            "rx_drops":"INTEGER",
+            "tx_drops":"INTEGER",
+            "error_delta":"INTEGER NOT NULL DEFAULT 0",
+            "drop_delta":"INTEGER NOT NULL DEFAULT 0",
+            "counter_sample_at":"TEXT"
+        }
+        for col, ddl in wired_migrations.items():
+            if col not in wired_cols:
+                c.execute(f"ALTER TABLE wired_port_state ADD COLUMN {col} {ddl}")
 
         speed_cols = {row[1] for row in c.execute("PRAGMA table_info(speedtest_results)").fetchall()}
         speed_migrations = {
@@ -610,6 +631,16 @@ class Database:
         c.close()
 
 
+    @staticmethod
+    def _counter_delta_safe(current, previous):
+        try:
+            if current is None or previous is None:
+                return 0
+            current=int(current); previous=int(previous)
+            return current-previous if current >= previous else 0
+        except Exception:
+            return 0
+
     def record_wired_ports(self, ports):
         if not ports:
             return
@@ -630,6 +661,10 @@ class Database:
             endpoint_key=str(p.get("endpointKey") or "")
             endpoint_name=p.get("endpointName")
             poe_state=str(p.get("poeState") or "")
+            rx_errors=p.get("rxErrors")
+            tx_errors=p.get("txErrors")
+            rx_drops=p.get("rxDrops")
+            tx_drops=p.get("txDrops")
             prev=c.execute("""
                 SELECT * FROM wired_port_state
                 WHERE device_id=? AND port_idx=?
@@ -639,11 +674,15 @@ class Database:
                 c.execute("""
                     INSERT INTO wired_port_state(
                         device_id,device_name,port_idx,state,speed_mbps,
-                        endpoint_key,endpoint_name,poe_state,first_seen,last_seen,last_change
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                        endpoint_key,endpoint_name,poe_state,
+                        rx_errors,tx_errors,rx_drops,tx_drops,error_delta,drop_delta,counter_sample_at,
+                        first_seen,last_seen,last_change
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,(
                     device_id,p.get("deviceName"),port_idx,state,speed,
-                    endpoint_key,endpoint_name,poe_state,now,now,now
+                    endpoint_key,endpoint_name,poe_state,
+                    rx_errors,tx_errors,rx_drops,tx_drops,0,0,now,
+                    now,now,now
                 ))
                 continue
 
@@ -674,19 +713,47 @@ class Database:
                         endpoint_name
                     ))
 
+            error_delta=(
+                self._counter_delta_safe(rx_errors,prev["rx_errors"]) +
+                self._counter_delta_safe(tx_errors,prev["tx_errors"])
+            )
+            drop_delta=(
+                self._counter_delta_safe(rx_drops,prev["rx_drops"]) +
+                self._counter_delta_safe(tx_drops,prev["tx_drops"])
+            )
+
             c.execute("""
                 UPDATE wired_port_state
                 SET device_name=?,state=?,speed_mbps=?,endpoint_key=?,endpoint_name=?,
-                    poe_state=?,last_seen=?,last_change=?
+                    poe_state=?,rx_errors=?,tx_errors=?,rx_drops=?,tx_drops=?,
+                    error_delta=?,drop_delta=?,counter_sample_at=?,
+                    last_seen=?,last_change=?
                 WHERE device_id=? AND port_idx=?
             """,(
                 p.get("deviceName"),state,speed,endpoint_key,endpoint_name,
-                poe_state,now,last_change,device_id,port_idx
+                poe_state,rx_errors,tx_errors,rx_drops,tx_drops,
+                error_delta,drop_delta,now,
+                now,last_change,device_id,port_idx
             ))
 
         c.execute("DELETE FROM wired_port_events WHERE ts < ?",(cutoff,))
         c.commit()
         c.close()
+
+    def wired_port_counter_summary(self):
+        c=self.connect()
+        rows=c.execute("""
+            SELECT device_id,port_idx,error_delta,drop_delta,counter_sample_at
+            FROM wired_port_state
+        """).fetchall()
+        c.close()
+        return {
+            f"{r['device_id']}:{r['port_idx']}":{
+                "errorDelta":r["error_delta"] or 0,
+                "dropDelta":r["drop_delta"] or 0,
+                "sampleAt":r["counter_sample_at"],
+            } for r in rows
+        }
 
     def wired_port_event_summary(self, hours=24):
         cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
