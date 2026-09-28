@@ -814,7 +814,12 @@ function renderWiredPortTable(){
       ?("POWERING"+(x.poePowerW!=null?" · "+Number(x.poePowerW).toFixed(1)+" W":""))
       :(x.poeState||"—");
     const traffic=[x.rxRateBps!=null?"RX "+rateMbps(x.rxRateBps):null,x.txRateBps!=null?"TX "+rateMbps(x.txRateBps):null].filter(Boolean).join(" / ")||"—";
-    const errors=(Number(x.rxErrors||0)+Number(x.txErrors||0))+" err · "+(Number(x.rxDrops||0)+Number(x.txDrops||0))+" drop";
+    const cumulativeErrors=Number(x.cumulativeErrors??(Number(x.rxErrors||0)+Number(x.txErrors||0)));
+    const cumulativeDrops=Number(x.cumulativeDrops??(Number(x.rxDrops||0)+Number(x.txDrops||0)));
+    const recentErrors=Number(x.errorDelta||0);
+    const recentDrops=Number(x.dropDelta||0);
+    const errors=cumulativeErrors+" err · "+cumulativeDrops+" drop"+
+      '<div class="muted">recent +'+recentErrors+' err / +'+recentDrops+' drop</div>';
     const profile=[x.nativeVlan!=null?"VLAN "+x.nativeVlan:null,x.profile].filter(Boolean).join(" · ")||"—";
     const changes=(Number(x.stateChanges24h||0))+" state · "+(Number(x.speedChanges24h||0))+" speed";
     return '<tr>'+
@@ -824,7 +829,7 @@ function renderWiredPortTable(){
       '<td>'+esc(wiredLinkSpeed(x.maxSpeedMbps))+'</td>'+
       '<td>'+esc(poe)+'</td>'+
       '<td>'+esc(traffic)+'</td>'+
-      '<td>'+esc(errors)+'</td>'+
+      '<td>'+errors+'</td>'+
       '<td>'+esc(profile)+'</td>'+
       '<td>'+esc(changes)+(x.lastEvent?'<div class="muted">'+esc(fmtShortDate(x.lastEvent))+'</div>':"")+'</td>'+
       '<td><span class="status-tag '+wiredStatusClass(x.status)+'">'+esc(x.status)+'</span><div class="muted wired-reason">'+esc(x.reason)+'</div></td>'+
