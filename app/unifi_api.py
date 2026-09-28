@@ -91,3 +91,19 @@ class UniFiAPI:
 
     def dpi_applications(self):
         return self.items(self.get("/dpi/applications", {"limit": 200, "offset": 0}))
+
+
+    def firewall_zones(self, site_id):
+        return self.items(self.get(f"/sites/{site_id}/firewall/zones", {"limit": 200, "offset": 0}))
+
+    def firewall_policies(self, site_id):
+        return self.items(self.get(f"/sites/{site_id}/firewall/policies", {"limit": 200, "offset": 0}))
+
+    def acl_rules(self, site_id):
+        return self.items(self.get(f"/sites/{site_id}/acl-rules", {"limit": 200, "offset": 0}))
+
+    def dns_policies(self, site_id):
+        return self.items(self.get(f"/sites/{site_id}/dns/policies", {"limit": 200, "offset": 0}))
+
+    def wan_interfaces(self, site_id):
+        return self.items(self.get(f"/sites/{site_id}/wans", {"limit": 200, "offset": 0}))
