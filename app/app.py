@@ -22,7 +22,7 @@ from .wired_audit import build_wired_audit
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.19.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.19.1"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -471,12 +471,14 @@ def _wired_audit_for_snapshot(snapshot, include_events=True):
     classic_clients=_classic_clients_cached()
     events=db.wired_port_event_summary(24) if include_events else {}
     recent=db.wired_recent_events(24,200) if include_events else []
+    counters=db.wired_port_counter_summary()
     return build_wired_audit(
         snapshot,
         classic_devices=classic_devices,
         classic_clients=classic_clients,
         event_summary=events,
         recent_events=recent,
+        counter_summary=counters,
     )
 
 def report_data():
