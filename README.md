@@ -2,8 +2,13 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.19.0
+## v0.19.1
 
+- Fixes wired false positives from lifetime error/drop counters by scoring only counter growth between monitor samples
+- Keeps cumulative error/drop totals visible while showing a separate recent-delta line
+- Fixes PoE false faults: poe_good=false alone no longer means FAULT when a port simply is not delivering PoE
+- Merges official port metadata with classic telemetry so port capability/name can be filled when available
+- Expands expected 100 Mbps endpoint recognition for Lutron hubs, bridges, media/streaming and smart-home devices
 - Deep Wired & Switch Audit maps active switch ports to connected UniFi devices and wired clients when classic telemetry exposes the relationship
 - Shows negotiated link speed, port capability, PoE state/watts, live RX/TX rate, errors/drops, VLAN/profile and 24-hour state/speed changes
 - Learns wired link state changes over time without storing a high-volume per-minute port history
@@ -212,4 +217,4 @@ Future audit releases can add port-forward/UPnP exposure, deeper switch error/Po
 
 The Wired / Switches page combines the supported Integration API with read-only classic device/client telemetry when local private credentials are configured. Active ports are mapped to endpoints where UniFi exposes switch MAC/port relationships. The page shows negotiated link speed, port capability, PoE, live traffic, errors/drops, VLAN/profile data and 24-hour state/speed changes.
 
-The wired score is intentionally endpoint-aware. A 100 Mbps link is not automatically a fault: likely IoT/camera endpoints can be classified as expected low-speed links, while 100 Mbps infrastructure links, PoE faults, repeated link flaps and substantial error/drop counts receive stronger attention. Link-change history begins learning after v0.19.0 is installed.
+The wired score is intentionally endpoint-aware. A 100 Mbps link is not automatically a fault: likely IoT/camera/smart-home endpoints can be classified as expected low-speed links, while 100 Mbps infrastructure links, explicit PoE faults and repeated link flaps receive stronger attention. Error/drop totals are displayed as cumulative controller counters, but scoring uses only increases observed between monitor samples so old lifetime counters do not create false warnings. Link-change history begins learning after v0.19.0 is installed.
