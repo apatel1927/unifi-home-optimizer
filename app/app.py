@@ -4,6 +4,7 @@ import time
 import requests
 import subprocess
 import json
+import re
 import dns.resolver
 from ping3 import ping
 import traceback
@@ -20,7 +21,7 @@ from .audit import build_network_audit
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.18.1"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.18.2"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -885,38 +886,52 @@ def _ookla_speedtest_available():
 def _list_speedtest_servers():
     try:
         r=subprocess.run(
-            ["speedtest","--accept-license","--accept-gdpr","--servers"],
+            ["speedtest","--accept-license","--accept-gdpr","-L"],
             capture_output=True,text=True,timeout=30
         )
         if r.returncode!=0:
-            return {"ok":False,"error":(r.stderr or r.stdout or "Unable to list Ookla servers").strip()}
-        lines=r.stdout.splitlines()
-        header_index=next((i for i,line in enumerate(lines) if "ID" in line and "Name" in line and "Location" in line and "Country" in line),None)
-        if header_index is None:
-            return {"ok":False,"error":"Unexpected Ookla server-list format"}
-        header=lines[header_index]
-        name_pos=header.find("Name")
-        location_pos=header.find("Location")
-        country_pos=header.find("Country")
+            return {
+                "ok":False,
+                "error":(r.stderr or r.stdout or "Unable to list Ookla servers").strip(),
+                "returnCode":r.returncode
+            }
+
         servers=[]
-        for line in lines[header_index+1:]:
-            if not line.strip() or set(line.strip())=={"="}:
+        for raw in r.stdout.splitlines():
+            line=raw.rstrip()
+            if not line.strip():
                 continue
-            if len(line)<=name_pos:
+            if "Closest servers" in line or set(line.strip())=={"="}:
                 continue
-            sid=line[:name_pos].strip()
-            if not sid.isdigit():
+            if re.match(r"^\s*ID\s+",line):
                 continue
-            name=line[name_pos:location_pos].strip() if location_pos>name_pos else ""
-            location=line[location_pos:country_pos].strip() if country_pos>location_pos else ""
-            country=line[country_pos:].strip() if country_pos>=0 else ""
+
+            # Official Ookla -L output is fixed-width, but names/locations may
+            # themselves contain spaces. Split on runs of 2+ spaces.
+            parts=[p.strip() for p in re.split(r"\s{2,}",line.strip()) if p.strip()]
+            if len(parts) < 4 or not parts[0].isdigit():
+                continue
+
             servers.append({
-                "id":sid,
-                "name":name,
-                "location":location,
-                "country":country,
+                "id":parts[0],
+                "name":parts[1],
+                "location":parts[2],
+                "country":" ".join(parts[3:]),
             })
-        return {"ok":True,"servers":servers[:25]}
+
+        if not servers:
+            preview=" | ".join(x.strip() for x in r.stdout.splitlines()[:8] if x.strip())
+            return {
+                "ok":False,
+                "error":"Ookla returned a server list, but the app could not parse it.",
+                "outputPreview":preview[:1000]
+            }
+
+        return {"ok":True,"servers":servers[:25],"count":len(servers)}
+    except FileNotFoundError:
+        return {"ok":False,"error":"Official Ookla Speedtest CLI is not installed in this container."}
+    except subprocess.TimeoutExpired:
+        return {"ok":False,"error":"Ookla nearby-server lookup timed out after 30 seconds."}
     except Exception as e:
         return {"ok":False,"error":str(e)}
 
