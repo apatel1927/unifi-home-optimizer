@@ -50,7 +50,7 @@ def _score(findings, category=None):
     return max(0,min(100,score))
 
 
-def build_network_audit(snapshot, api):
+def build_network_audit(snapshot, api, wired_audit=None):
     findings=[]
     site=snapshot.get("site") or {}
     site_id=site.get("id")
@@ -230,26 +230,45 @@ def build_network_audit(snapshot, api):
                      f"2.4 GHz is configured at {width} MHz on channel {r.get('channel')}.",d.get("name"),
                      "20 MHz is generally the safer coexistence target; validate with your A/B/A workflow before changing it.")
 
-    # Wired link sanity.
-    slow_links=[]
-    for d in devices:
-        if d.get("optimizerType") not in ("SWITCH","GATEWAY"):
-            continue
-        for p in ((d.get("interfaces") or {}).get("ports") or []):
-            speed=p.get("speedMbps")
-            cap=p.get("maxSpeedMbps")
-            if p.get("state")=="UP" and isinstance(speed,(int,float)) and isinstance(cap,(int,float)):
-                if cap>=1000 and speed<=100:
-                    slow_links.append((d,p))
-    if slow_links:
-        for d,p in slow_links:
-            _add(findings,"REVIEW","WIRED","Port negotiated well below capability",
-                 f"Port {p.get('idx')} is at {p.get('speedMbps')} Mbps on a {p.get('maxSpeedMbps')} Mbps-capable port.",
-                 d.get("name"),
-                 "Verify this is expected for the endpoint; otherwise check cable, transceiver and NIC negotiation.")
+    # Wired link sanity. Prefer the deep port audit when available so
+    # expected 100 Mbps IoT/camera links are not penalized as infrastructure faults.
+    if wired_audit:
+        summary=wired_audit.get("summary") or {}
+        warning_ports=[p for p in (wired_audit.get("ports") or []) if p.get("status")=="WARNING"]
+        review_ports=[p for p in (wired_audit.get("ports") or []) if p.get("status")=="REVIEW"]
+        if not warning_ports and not review_ports:
+            _add(findings,"PASS","WIRED","No actionable wired-port findings",
+                 f"{summary.get('active',0)} active port(s) were analyzed; expected low-speed endpoints were treated as normal.")
+        for p in warning_ports:
+            _add(findings,"WARNING","WIRED","Wired port needs attention",
+                 p.get("reason") or "Port requires attention.",
+                 f"{p.get('deviceName')} · Port {p.get('portIdx')}",
+                 "Open the Switches page for endpoint, speed, PoE, errors and link-change history.")
+        for p in review_ports:
+            _add(findings,"REVIEW","WIRED","Wired port needs review",
+                 p.get("reason") or "Port should be reviewed.",
+                 f"{p.get('deviceName')} · Port {p.get('portIdx')}",
+                 "Open the Switches page to confirm whether the negotiated speed is expected for the connected endpoint.")
     else:
-        _add(findings,"PASS","WIRED","No obvious 100 Mbps negotiation mismatches",
-             "No active >=1 Gbps-capable switch port was found negotiated at 100 Mbps or below.")
+        slow_links=[]
+        for d in devices:
+            if d.get("optimizerType") not in ("SWITCH","GATEWAY"):
+                continue
+            for p in ((d.get("interfaces") or {}).get("ports") or []):
+                speed=p.get("speedMbps")
+                cap=p.get("maxSpeedMbps")
+                if p.get("state")=="UP" and isinstance(speed,(int,float)) and isinstance(cap,(int,float)):
+                    if cap>=1000 and speed<=100:
+                        slow_links.append((d,p))
+        if slow_links:
+            for d,p in slow_links:
+                _add(findings,"REVIEW","WIRED","Port negotiated well below capability",
+                     f"Port {p.get('idx')} is at {p.get('speedMbps')} Mbps on a {p.get('maxSpeedMbps')} Mbps-capable port.",
+                     d.get("name"),
+                     "Verify this is expected for the endpoint; otherwise check cable, transceiver and NIC negotiation.")
+        else:
+            _add(findings,"PASS","WIRED","No obvious 100 Mbps negotiation mismatches",
+                 "No active >=1 Gbps-capable switch port was found negotiated at 100 Mbps or below.")
 
     # Firewall / ACL review.
     enabled_fw=[p for p in firewall_policies if p.get("enabled") is not False]
@@ -315,6 +334,8 @@ def build_network_audit(snapshot, api):
 
     categories=["SECURITY","FIREWALL","SEGMENTATION","WIFI","WIRED","WAN","DHCP_DNS","DEVICE_HEALTH"]
     scores={cat:_score(findings,cat) for cat in categories}
+    if wired_audit and wired_audit.get("score") is not None:
+        scores["WIRED"]=wired_audit.get("score")
     overall=round(sum(scores.values())/len(scores)) if scores else 100
     counts={status:sum(1 for x in findings if x.get("status")==status)
             for status in ("CRITICAL","WARNING","REVIEW","PASS")}
