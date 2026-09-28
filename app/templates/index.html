@@ -31,6 +31,7 @@
     <button class="nav" data-page="optimize">Auto Optimize</button>
     <button class="nav" data-page="clients">Clients</button>
     <button class="nav" data-page="topology">Topology</button>
+    <button class="nav" data-page="audit">Network Audit</button>
     <button class="nav" data-page="roaming">Roaming</button>
     <button class="nav" data-page="switches">Switches</button>
     <button class="nav" data-page="history">History</button>
@@ -587,6 +588,70 @@
       <div class="section-head"><h2>Topology notes</h2></div>
       <div class="panel notice">
         This is a logical/live topology, not a floor-plan drawing. A client is shown beneath the AP or switch UniFi currently reports as its uplink. If UniFi does not expose an uplink for a device, it appears in an Unresolved section instead of the app guessing its path.
+      </div>
+    </section>
+
+    <section id="audit" class="page">
+      <div class="section-head">
+        <div>
+          <h2>Network Audit</h2>
+          <span class="muted">Read-only security, segmentation, Wi-Fi, wired, WAN, DNS/DHCP and device-health review.</span>
+        </div>
+        <button class="secondary" onclick="loadNetworkAudit()">Run audit now</button>
+      </div>
+
+      <div id="auditNotice" class="panel notice">
+        The audit reads current UniFi configuration and health data. It does not modify firewall, VLAN, Wi-Fi or switch settings.
+      </div>
+
+      <div class="summary-grid audit-summary-grid">
+        <div class="summary-card"><h3>Overall audit</h3><div id="auditOverallScore" class="big">—</div><div class="muted">Read-only score</div></div>
+        <div class="summary-card"><h3>Critical</h3><div id="auditCriticalCount" class="big bad">—</div></div>
+        <div class="summary-card"><h3>Warnings</h3><div id="auditWarningCount" class="big warn">—</div></div>
+        <div class="summary-card"><h3>Review</h3><div id="auditReviewCount" class="big info">—</div></div>
+        <div class="summary-card"><h3>Passed</h3><div id="auditPassCount" class="big good">—</div></div>
+        <div class="summary-card"><h3>Last audit</h3><div id="auditGeneratedAt" class="big compact-big">—</div></div>
+      </div>
+
+      <div class="section-head"><h2>Category scores</h2></div>
+      <div id="auditScoreCards" class="summary-grid audit-score-grid"></div>
+
+      <div class="panel client-filter-panel audit-filter-panel">
+        <div class="client-filter-grid">
+          <label class="client-filter wide">
+            <span>Search findings</span>
+            <input id="auditSearch" class="search" placeholder="Firewall, VLAN, WPA, DHCP, firmware…">
+          </label>
+          <label class="client-filter">
+            <span>Status</span>
+            <select id="auditStatusFilter" class="search">
+              <option value="">All statuses</option>
+              <option value="CRITICAL">Critical</option>
+              <option value="WARNING">Warning</option>
+              <option value="REVIEW">Review</option>
+              <option value="PASS">Pass</option>
+            </select>
+          </label>
+          <label class="client-filter">
+            <span>Category</span>
+            <select id="auditCategoryFilter" class="search"><option value="">All categories</option></select>
+          </label>
+        </div>
+      </div>
+
+      <div id="auditFindings"></div>
+
+      <div class="section-head"><h2>Configuration inventory</h2></div>
+      <div class="audit-inventory-grid">
+        <div class="panel audit-inventory-card"><h3>Networks</h3><div id="auditNetworksInventory"></div></div>
+        <div class="panel audit-inventory-card"><h3>Wi-Fi</h3><div id="auditWifiInventory"></div></div>
+        <div class="panel audit-inventory-card"><h3>Firewall</h3><div id="auditFirewallInventory"></div></div>
+        <div class="panel audit-inventory-card"><h3>WAN / DNS</h3><div id="auditWanInventory"></div></div>
+      </div>
+
+      <div class="section-head"><h2>Audit policy</h2></div>
+      <div class="panel notice">
+        PASS means the current data supports a healthy configuration. REVIEW means the setting is context-dependent and deserves confirmation, not that it is wrong. WARNING and CRITICAL are reserved for stronger evidence such as offline devices, duplicate active IPs, open/unverified Wi-Fi security, or broad allow policies. Automatic configuration changes are intentionally disabled on this page.
       </div>
     </section>
 
