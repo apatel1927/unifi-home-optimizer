@@ -25,6 +25,7 @@
     <button class="nav" data-page="wifi">Wi-Fi</button>
     <button class="nav" data-page="channels">Channel Planner</button>
     <button class="nav" data-page="internet">Internet</button>
+    <button class="nav" data-page="traffic">Traffic</button>
     <button class="nav" data-page="speedtest">Speed Test</button>
     <button class="nav" data-page="optimize">Auto Optimize</button>
     <button class="nav" data-page="clients">Clients</button>
@@ -108,6 +109,128 @@
       <div class="section-head"><h2>Internet monitoring notes</h2></div>
       <div class="panel notice">
         Internet availability is measured by this app from your Unraid server. Gateway uptime is the UDM's device uptime, not necessarily the ISP session uptime. Throughput comes from the UDM gateway uplink statistics exposed by the UniFi Network API.
+      </div>
+    </section>
+
+    <section id="traffic" class="page">
+      <div class="section-head">
+        <div>
+          <h2>Traffic Analytics</h2>
+          <span class="muted">Live client traffic, historical data usage, VLAN/AP breakdowns, and UniFi DPI application visibility.</span>
+        </div>
+        <div class="traffic-range-controls">
+          <select id="trafficRange" class="search">
+            <option value="1">Last hour</option>
+            <option value="24" selected>Last 24 hours</option>
+            <option value="168">Last 7 days</option>
+            <option value="720">Last 30 days</option>
+          </select>
+          <button class="secondary" onclick="loadTraffic()">Refresh</button>
+        </div>
+      </div>
+
+      <div id="trafficNotice" class="panel notice">Loading traffic data…</div>
+
+      <div class="summary-grid traffic-summary-grid">
+        <div class="summary-card"><h3>Live RX</h3><div id="trafficLiveRx" class="big">—</div><div class="muted">Aggregate client receive rate</div></div>
+        <div class="summary-card"><h3>Live TX</h3><div id="trafficLiveTx" class="big">—</div><div class="muted">Aggregate client transmit rate</div></div>
+        <div class="summary-card"><h3>Data used</h3><div id="trafficTotalUsage" class="big">—</div><div id="trafficTotalUsageDetail" class="muted">Selected period</div></div>
+        <div class="summary-card"><h3>Clients seen</h3><div id="trafficClientCount" class="big">—</div><div class="muted">With recorded traffic</div></div>
+        <div class="summary-card"><h3>Top client</h3><div id="trafficTopClient" class="big compact-big">—</div><div id="trafficTopClientUsage" class="muted">—</div></div>
+        <div class="summary-card"><h3>Top application</h3><div id="trafficTopApp" class="big compact-big">—</div><div id="trafficTopAppUsage" class="muted">—</div></div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="panel chart-panel">
+          <div class="chart-title"><h3>Historical traffic usage</h3><span class="muted">RX / TX by hour</span></div>
+          <svg id="trafficUsageChart" class="spark-chart" viewBox="0 0 800 220" preserveAspectRatio="none"></svg>
+          <div class="chart-legend"><span>RX</span><span>TX</span></div>
+        </div>
+        <div class="panel chart-panel">
+          <div class="chart-title"><h3>Top application categories</h3><span class="muted">UniFi DPI classified traffic</span></div>
+          <div id="trafficCategoryBars" class="traffic-bars"></div>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <div>
+          <h2>Client usage</h2>
+          <span class="muted">Filter historical usage by AP/uplink, VLAN, network, or client.</span>
+        </div>
+      </div>
+      <div class="panel client-filter-panel">
+        <div class="client-filter-grid traffic-filter-grid">
+          <label class="client-filter wide">
+            <span>Search client</span>
+            <input id="trafficClientSearch" class="search" placeholder="Name, IP, MAC…">
+          </label>
+          <label class="client-filter">
+            <span>AP / uplink</span>
+            <select id="trafficApFilter" class="search"><option value="">All APs / uplinks</option></select>
+          </label>
+          <label class="client-filter">
+            <span>VLAN</span>
+            <select id="trafficVlanFilter" class="search"><option value="">All VLANs</option></select>
+          </label>
+          <label class="client-filter">
+            <span>Network</span>
+            <select id="trafficNetworkFilter" class="search"><option value="">All networks</option></select>
+          </label>
+          <label class="client-filter">
+            <span>Sort</span>
+            <select id="trafficClientSort" class="search">
+              <option value="total-desc">Most data used</option>
+              <option value="total-asc">Least data used</option>
+              <option value="rx-desc">RX high → low</option>
+              <option value="tx-desc">TX high → low</option>
+              <option value="name-asc">Name A → Z</option>
+              <option value="ip-asc">IP low → high</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="panel table-wrap">
+        <table>
+          <thead><tr><th>Client</th><th>IP</th><th>VLAN</th><th>Network</th><th>AP / uplink</th><th>RX data</th><th>TX data</th><th>Total</th></tr></thead>
+          <tbody id="trafficClientTable"></tbody>
+        </table>
+      </div>
+
+      <div class="traffic-two-column">
+        <div>
+          <div class="section-head"><h2>Usage by VLAN</h2></div>
+          <div class="panel table-wrap">
+            <table>
+              <thead><tr><th>VLAN</th><th>Network</th><th>Clients</th><th>RX</th><th>TX</th><th>Total</th></tr></thead>
+              <tbody id="trafficVlanTable"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div class="section-head"><h2>Usage by AP / uplink</h2></div>
+          <div class="panel table-wrap">
+            <table>
+              <thead><tr><th>AP / uplink</th><th>Clients</th><th>RX</th><th>TX</th><th>Total</th></tr></thead>
+              <tbody id="trafficUplinkTable"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <div>
+          <h2>Applications & destinations</h2>
+          <span class="muted">Traffic classification reported by UniFi DPI.</span>
+        </div>
+      </div>
+      <div class="panel notice">
+        This view can identify application/category traffic when UniFi DPI recognizes it. It does not claim exact website URLs or every encrypted remote destination; VPNs, HTTPS/QUIC, Private Relay and encrypted DNS can limit visibility.
+      </div>
+      <div class="panel table-wrap">
+        <table>
+          <thead><tr><th>Application</th><th>Category</th><th>RX</th><th>TX</th><th>Total</th></tr></thead>
+          <tbody id="trafficAppTable"></tbody>
+        </table>
       </div>
     </section>
 
