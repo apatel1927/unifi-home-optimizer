@@ -1136,6 +1136,8 @@ function renderSpeedtest(d){
   const dl=document.getElementById("speedtestDownload");
   const ul=document.getElementById("speedtestUpload");
   const pg=document.getElementById("speedtestPing");
+  const jit=document.getElementById("speedtestJitter");
+  const loss=document.getElementById("speedtestPacketLoss");
   const srv=document.getElementById("speedtestServer");
   const srvDetail=document.getElementById("speedtestServerDetail");
   const last=document.getElementById("speedtestLastRun");
@@ -1148,13 +1150,33 @@ function renderSpeedtest(d){
   if(dl)dl.textContent=latest?fmtMbps(latest.download_mbps):"—";
   if(ul)ul.textContent=latest?fmtMbps(latest.upload_mbps):"—";
   if(pg)pg.textContent=latest?fmtMs(latest.ping_ms):"—";
+  if(jit)jit.textContent=latest&&latest.jitter_ms!=null?fmtMs(latest.jitter_ms):"—";
+  if(loss)loss.textContent=latest&&latest.packet_loss_pct!=null?Number(latest.packet_loss_pct).toFixed(2)+"%":"—";
   if(srv)srv.textContent=latest?(latest.server_sponsor||latest.server_name||"—"):"—";
-  if(srvDetail)srvDetail.textContent=latest?([latest.server_name,latest.server_distance_km!=null?Number(latest.server_distance_km).toFixed(0)+" km":null].filter(Boolean).join(" · ")||"—"):"—";
+  if(srvDetail)srvDetail.textContent=latest?([
+    latest.server_location||latest.server_name,
+    latest.server_country,
+    latest.server_id?"ID "+latest.server_id:null
+  ].filter(Boolean).join(" · ")||"—"):"—";
   if(last)last.textContent=d.latest?fmtShortDate(d.latest.ts):"Never";
   if(dur)dur.textContent=d.latest?.duration_sec!=null?"Completed in "+Number(d.latest.duration_sec).toFixed(0)+" sec":"—";
   if(next)next.textContent=d.enabled?(d.nextDue?fmtShortDate(d.nextDue):"Due now"):"Disabled";
   if(toggle)toggle.checked=!!d.enabled;
   if(interval)interval.value=String(d.intervalHours||6);
+  const preferred=document.getElementById("speedtestPreferredServer");
+  if(preferred){
+    const value=String(d.preferredServerId||"");
+    if(value && ![...preferred.options].some(o=>o.value===value)){
+      preferred.insertAdjacentHTML("beforeend",'<option value="'+esc(value)+'">Preferred server ID '+esc(value)+'</option>');
+    }
+    preferred.value=value;
+  }
+  const selectionStatus=document.getElementById("speedtestServerSelectionStatus");
+  if(selectionStatus){
+    selectionStatus.textContent=(d.engine==="OOKLA_OFFICIAL"?"Official Ookla CLI":"Speedtest engine")+
+      " · "+(d.preferredServerId?"locked to server ID "+d.preferredServerId:"automatic nearby selection")+
+      (d.engineAvailable===false?" · CLI unavailable":"");
+  }
 
   if(notice){
     if(d.running){
@@ -1192,17 +1214,24 @@ function renderSpeedtest(d){
     const rows=[...hist].reverse();
     table.innerHTML=rows.length?rows.map(x=>{
       const status=x.success?'<span class="status-tag SUCCESS">SUCCESS</span>':'<span class="status-tag FAILED">FAILED</span>';
-      const server=x.success?([x.server_sponsor,x.server_name].filter(Boolean).join(" · ")||"—"):"—";
+      const server=x.success?([
+        x.server_sponsor,
+        x.server_location||x.server_name,
+        x.server_country,
+        x.server_id?"ID "+x.server_id:null
+      ].filter(Boolean).join(" · ")||"—"):"—";
       return '<tr>'+
         '<td>'+esc(fmtDateTime(x.ts))+'</td>'+
         '<td>'+esc(x.success?fmtMbps(x.download_mbps):"—")+'</td>'+
         '<td>'+esc(x.success?fmtMbps(x.upload_mbps):"—")+'</td>'+
         '<td>'+esc(x.success?fmtMs(x.ping_ms):"—")+'</td>'+
+        '<td>'+esc(x.success&&x.jitter_ms!=null?fmtMs(x.jitter_ms):"—")+'</td>'+
+        '<td>'+esc(x.success&&x.packet_loss_pct!=null?Number(x.packet_loss_pct).toFixed(2)+"%":"—")+'</td>'+
         '<td>'+esc(server)+'</td>'+
         '<td>'+esc(x.duration_sec==null?"—":Number(x.duration_sec).toFixed(0)+" sec")+'</td>'+
         '<td>'+status+(x.error?'<div class="muted">'+esc(x.error)+'</div>':"")+'</td>'+
       '</tr>';
-    }).join(""):'<tr><td colspan="7"><div class="empty">No speed test history yet.</div></td></tr>';
+    }).join(""):'<tr><td colspan="9"><div class="empty">No speed test history yet.</div></td></tr>';
   }
 
   const btn=document.getElementById("runSpeedtestBtn");
@@ -1218,6 +1247,32 @@ async function loadSpeedtest(){
     const d=await r.json();
     if(d.ok)renderSpeedtest(d);
   }catch{}
+}
+
+async function loadSpeedtestServers(){
+  const btn=document.getElementById("loadSpeedtestServersBtn");
+  const select=document.getElementById("speedtestPreferredServer");
+  const status=document.getElementById("speedtestServerSelectionStatus");
+  if(btn){btn.disabled=true;btn.textContent="Loading…";}
+  if(status)status.textContent="Asking Ookla for nearby servers…";
+  try{
+    const r=await fetch("/api/speedtest/servers",{cache:"no-store"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Unable to list servers");
+    const current=String(report?.speedtestPreferredServerId||select?.value||"");
+    if(select){
+      select.innerHTML='<option value="">Automatic · Ookla nearby selection</option>'+
+        (d.servers||[]).map(s=>
+          '<option value="'+esc(s.id)+'">'+esc(s.name)+' · '+esc(s.location)+' · '+esc(s.country)+' · ID '+esc(s.id)+'</option>'
+        ).join("");
+      if(current && [...select.options].some(o=>o.value===current))select.value=current;
+    }
+    if(status)status.textContent=(d.servers||[]).length+" nearby server"+((d.servers||[]).length===1?"":"s")+" returned by official Ookla CLI";
+  }catch(e){
+    if(status)status.textContent="Server list error: "+(e.message||e);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Load nearby servers";}
+  }
 }
 
 async function runSpeedtestNow(){
