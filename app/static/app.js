@@ -18,6 +18,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="topology") loadTopology();
     if(btn.dataset.page==="switches") loadWiredAudit();
     if(btn.dataset.page==="audit") loadNetworkAudit();
+    if(btn.dataset.page==="exportai") loadAiStatus();
   });
 });
 
@@ -872,6 +873,152 @@ async function loadWiredAudit(){
   if(!el)return;
   el.addEventListener(id==="wiredSearch"?"input":"change",renderWiredPortTable);
 });
+
+
+function renderAiStatus(d){
+  const configured=document.getElementById("aiConfigured");
+  const configuredDetail=document.getElementById("aiConfiguredDetail");
+  const model=document.getElementById("aiModel");
+  const autoStatus=document.getElementById("aiAutoStatus");
+  const autoDetail=document.getElementById("aiAutoDetail");
+  const lastRun=document.getElementById("aiLastRun");
+  const lastStatus=document.getElementById("aiLastStatus");
+  const notice=document.getElementById("aiAdvisorNotice");
+  const output=document.getElementById("aiOutput");
+  const toggle=document.getElementById("aiAutoToggle");
+  const interval=document.getElementById("aiInterval");
+  const runBtn=document.getElementById("runAiAnalysisBtn");
+
+  if(configured){
+    configured.textContent=d.configured?"READY":"NOT CONFIGURED";
+    configured.className="big compact-big "+(d.configured?"good":"warn");
+  }
+  if(configuredDetail)configuredDetail.textContent=d.configured?"API key is present in the container environment":"Add OPENAI_API_KEY to the Unraid container";
+  if(model)model.textContent=d.model||"—";
+  if(autoStatus){
+    autoStatus.textContent=d.automaticEnabled?"ON":"OFF";
+    autoStatus.className="big compact-big "+(d.automaticEnabled?"good":"info");
+  }
+  if(autoDetail)autoDetail.textContent=d.automaticEnabled?"Every "+d.intervalHours+" hour"+(Number(d.intervalHours)===1?"":"s"):"Manual analysis only";
+  if(toggle){
+    toggle.checked=!!d.automaticEnabled;
+    toggle.disabled=!d.configured;
+  }
+  if(interval){
+    interval.value=String(d.intervalHours||6);
+    interval.disabled=!d.configured;
+  }
+  if(runBtn){
+    runBtn.disabled=!d.configured||!!d.running;
+    runBtn.textContent=d.running?"AI Analysis Running…":"Analyze network now";
+  }
+
+  const latest=d.latest||null;
+  if(lastRun)lastRun.textContent=latest?.ts?fmtShortDate(latest.ts):"Never";
+  if(lastStatus)lastStatus.textContent=latest?(latest.status+(latest.trigger?" · "+latest.trigger:"")):"—";
+  if(output){
+    if(latest?.summary)output.textContent=latest.summary;
+    else if(latest?.error)output.textContent="Last AI analysis failed: "+latest.error;
+    else output.textContent="No AI analysis has been run yet.";
+  }
+
+  if(notice){
+    if(!d.configured){
+      notice.innerHTML='<b class="info">AI integration is optional</b><br><span class="muted">Add <code>OPENAI_API_KEY</code> to the Unraid container environment. You can optionally set <code>OPENAI_MODEL</code>; the default is a cost-sensitive model. The API key is never returned by the app or included in exports.</span>';
+    }else if(d.running){
+      notice.innerHTML='<b class="info">AI analysis is running…</b><br><span class="muted">The advisor is reading a sanitized current snapshot. Network settings will not be changed.</span>';
+    }else if(d.lastError){
+      notice.innerHTML='<b class="warn">AI advisor reported an error</b><br><span class="muted">'+esc(d.lastError)+'</span>';
+    }else{
+      notice.innerHTML='<b class="good">AI advisor ready</b><br><span class="muted">Advisory-only mode · '+esc(d.model||"configured model")+' · automatic review '+(d.automaticEnabled?"enabled":"disabled")+'.</span>';
+    }
+  }
+}
+
+async function loadAiStatus(){
+  try{
+    const r=await fetch("/api/ai",{cache:"no-store"});
+    const d=await r.json();
+    if(d.ok)renderAiStatus(d);
+  }catch(e){
+    const notice=document.getElementById("aiAdvisorNotice");
+    if(notice)notice.innerHTML='<b class="bad">Unable to load AI status</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }
+}
+
+async function runAiAnalysisNow(){
+  const btn=document.getElementById("runAiAnalysisBtn");
+  if(btn){btn.disabled=true;btn.textContent="Starting AI analysis…";}
+  try{
+    const r=await fetch("/api/ai/analyze",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok){
+      const notice=document.getElementById("aiAdvisorNotice");
+      if(notice)notice.innerHTML='<b class="warn">'+esc(d.error||"Unable to start AI analysis")+'</b>';
+    }
+    await loadAiStatus();
+  }catch(e){
+    const notice=document.getElementById("aiAdvisorNotice");
+    if(notice)notice.innerHTML='<b class="bad">'+esc(e.message||e)+'</b>';
+  }finally{
+    setTimeout(loadAiStatus,1500);
+  }
+}
+
+async function copySupportSummary(){
+  const status=document.getElementById("exportStatus");
+  if(status)status.textContent="Building compact support summary…";
+  try{
+    const r=await fetch("/api/export/summary",{cache:"no-store"});
+    const text=await r.text();
+    if(!r.ok)throw new Error(text||"Unable to build summary");
+    await navigator.clipboard.writeText(text);
+    if(status)status.textContent="Compact support summary copied. Paste it directly into ChatGPT.";
+  }catch(e){
+    if(status)status.textContent="Copy failed: "+(e.message||e)+". You can use the JSON or ZIP download instead.";
+  }
+}
+
+function downloadSupport(kind){
+  const status=document.getElementById("exportStatus");
+  if(status)status.textContent="Building sanitized support "+kind.toUpperCase()+"…";
+  const url=kind==="zip"?"/api/export/support-bundle.zip":"/api/export/support-bundle.json";
+  window.location.href=url;
+  setTimeout(()=>{
+    if(status)status.textContent="Support export requested. Upload the downloaded file into this ChatGPT conversation for analysis.";
+  },1200);
+}
+
+document.getElementById("downloadSupportZipBtn")?.addEventListener("click",()=>downloadSupport("zip"));
+document.getElementById("downloadSupportJsonBtn")?.addEventListener("click",()=>downloadSupport("json"));
+document.getElementById("copySupportSummaryBtn")?.addEventListener("click",copySupportSummary);
+document.getElementById("runAiAnalysisBtn")?.addEventListener("click",runAiAnalysisNow);
+document.getElementById("aiAutoToggle")?.addEventListener("change",async e=>{
+  const r=await fetch("/api/ai/settings",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({automaticEnabled:e.target.checked})
+  });
+  const d=await r.json();
+  if(!d.ok){
+    e.target.checked=false;
+    const notice=document.getElementById("aiAdvisorNotice");
+    if(notice)notice.innerHTML='<b class="warn">'+esc(d.error||"Unable to update AI settings")+'</b>';
+  }
+  await loadAiStatus();
+});
+document.getElementById("aiInterval")?.addEventListener("change",async e=>{
+  await fetch("/api/ai/settings",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({intervalHours:Number(e.target.value)})
+  });
+  await loadAiStatus();
+});
+
+setInterval(()=>{
+  if(document.querySelector("#exportai.page.active"))loadAiStatus();
+},10000);
 
 
 function renderSwitches(){
