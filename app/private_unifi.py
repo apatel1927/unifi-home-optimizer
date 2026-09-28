@@ -157,6 +157,12 @@ class PrivateUniFiAPI:
     def clients(self):
         return self._items(self.classic("GET","/stat/sta"))
 
+    def site_dpi(self):
+        return self._items(self.classic("GET","/stat/sitedpi"))
+
+    def station_dpi(self):
+        return self._items(self.classic("GET","/stat/stadpi"))
+
     def discover_radios(self):
         devices=self.devices()
         aps=[]
