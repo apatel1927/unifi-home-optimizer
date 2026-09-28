@@ -16,4 +16,6 @@
   <Config Name="UniFi Site Name" Target="UNIFI_SITE_NAME" Default="default" Mode="" Description="Classic API site name; normally default" Type="Variable" Display="advanced" Required="false" Mask="false">default</Config>
   <Config Name="Poll Interval" Target="POLL_INTERVAL_SECONDS" Default="60" Mode="" Description="Polling interval in seconds" Type="Variable" Display="advanced" Required="true" Mask="false">60</Config>
   <Config Name="Retention Days" Target="RETENTION_DAYS" Default="30" Mode="" Description="History retention in days" Type="Variable" Display="advanced" Required="true" Mask="false">30</Config>
+  <Config Name="OpenAI API Key" Target="OPENAI_API_KEY" Default="" Mode="" Description="Optional OpenAI API key for the embedded advisory-only AI network analyzer" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="OpenAI Model" Target="OPENAI_MODEL" Default="gpt-5.6-luna" Mode="" Description="Optional model ID used by the embedded AI advisor" Type="Variable" Display="advanced" Required="false" Mask="false">gpt-5.6-luna</Config>
 </Container>
