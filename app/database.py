@@ -168,6 +168,43 @@ class Database:
             ON traffic_dpi_samples(ts);
         CREATE INDEX IF NOT EXISTS idx_traffic_dpi_samples_key_ts
             ON traffic_dpi_samples(category_id,app_id,ts);
+        CREATE TABLE IF NOT EXISTS wan_ping_samples(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            target_key TEXT NOT NULL,
+            target_name TEXT NOT NULL,
+            target_host TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            sent INTEGER NOT NULL,
+            received INTEGER NOT NULL,
+            packet_loss_pct REAL NOT NULL,
+            min_ms REAL,
+            avg_ms REAL,
+            max_ms REAL,
+            jitter_ms REAL,
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_wan_ping_samples_ts
+            ON wan_ping_samples(ts);
+        CREATE INDEX IF NOT EXISTS idx_wan_ping_target_ts
+            ON wan_ping_samples(target_key,ts);
+
+        CREATE TABLE IF NOT EXISTS wan_dns_samples(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            resolver_key TEXT NOT NULL,
+            resolver_name TEXT NOT NULL,
+            resolver_host TEXT,
+            query_name TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            latency_ms REAL,
+            answers INTEGER,
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_wan_dns_samples_ts
+            ON wan_dns_samples(ts);
+        CREATE INDEX IF NOT EXISTS idx_wan_dns_resolver_ts
+            ON wan_dns_samples(resolver_key,ts);
         CREATE TABLE IF NOT EXISTS speedtest_results(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -528,7 +565,7 @@ class Database:
 
     def database_stats(self):
         c=self.connect()
-        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples"]
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples","wan_ping_samples","wan_dns_samples"]
         counts={}
         for table in tables:
             try:
@@ -1038,4 +1075,168 @@ class Database:
         return {
             "apps":[dict(r) for r in apps],
             "categories":[dict(r) for r in categories]
+        }
+
+
+    def record_wan_ping(self, target_key, target_name, target_host, target_type,
+                        sent, received, packet_loss_pct,
+                        min_ms=None, avg_ms=None, max_ms=None, jitter_ms=None, error=None):
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        c.execute("""
+            INSERT INTO wan_ping_samples(
+                ts,target_key,target_name,target_host,target_type,
+                sent,received,packet_loss_pct,min_ms,avg_ms,max_ms,jitter_ms,error
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,(
+            now,target_key,target_name,target_host,target_type,
+            int(sent),int(received),float(packet_loss_pct),
+            min_ms,avg_ms,max_ms,jitter_ms,error
+        ))
+        c.execute("DELETE FROM wan_ping_samples WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def record_wan_dns(self, resolver_key, resolver_name, resolver_host,
+                       query_name, success, latency_ms=None, answers=None, error=None):
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        c.execute("""
+            INSERT INTO wan_dns_samples(
+                ts,resolver_key,resolver_name,resolver_host,query_name,
+                success,latency_ms,answers,error
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+        """,(
+            now,resolver_key,resolver_name,resolver_host,query_name,
+            1 if success else 0,latency_ms,answers,error
+        ))
+        c.execute("DELETE FROM wan_dns_samples WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def wan_quality_summary(self, hours=24, limit=1000):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+
+        target_rows=c.execute("""
+            SELECT
+                target_key,
+                MAX(target_name) AS target_name,
+                MAX(target_host) AS target_host,
+                MAX(target_type) AS target_type,
+                SUM(sent) AS sent,
+                SUM(received) AS received,
+                CASE WHEN SUM(sent)>0
+                     THEN (1.0-(CAST(SUM(received) AS REAL)/SUM(sent)))*100.0
+                     ELSE NULL END AS packet_loss_pct,
+                AVG(avg_ms) AS avg_ms,
+                MIN(min_ms) AS min_ms,
+                MAX(max_ms) AS max_ms,
+                AVG(jitter_ms) AS jitter_ms,
+                MAX(ts) AS last_sample
+            FROM wan_ping_samples
+            WHERE ts>=?
+            GROUP BY target_key
+            ORDER BY target_type ASC,target_name COLLATE NOCASE ASC
+        """,(cutoff,)).fetchall()
+
+        latest_ping=c.execute("""
+            SELECT p.*
+            FROM wan_ping_samples p
+            JOIN (
+                SELECT target_key,MAX(id) AS max_id
+                FROM wan_ping_samples
+                GROUP BY target_key
+            ) x ON x.max_id=p.id
+            ORDER BY p.target_type ASC,p.target_name COLLATE NOCASE ASC
+        """).fetchall()
+
+        ping_history=c.execute("""
+            SELECT *
+            FROM wan_ping_samples
+            WHERE ts>=?
+            ORDER BY id DESC
+            LIMIT ?
+        """,(cutoff,limit)).fetchall()
+
+        dns_rows=c.execute("""
+            SELECT
+                resolver_key,
+                MAX(resolver_name) AS resolver_name,
+                MAX(resolver_host) AS resolver_host,
+                COUNT(*) AS samples,
+                SUM(success) AS successes,
+                CASE WHEN COUNT(*)>0
+                     THEN CAST(SUM(success) AS REAL)/COUNT(*)*100.0
+                     ELSE NULL END AS success_pct,
+                AVG(CASE WHEN success=1 THEN latency_ms END) AS avg_latency_ms,
+                MIN(CASE WHEN success=1 THEN latency_ms END) AS min_latency_ms,
+                MAX(CASE WHEN success=1 THEN latency_ms END) AS max_latency_ms,
+                MAX(ts) AS last_sample
+            FROM wan_dns_samples
+            WHERE ts>=?
+            GROUP BY resolver_key
+            ORDER BY resolver_name COLLATE NOCASE ASC
+        """,(cutoff,)).fetchall()
+
+        latest_dns=c.execute("""
+            SELECT d.*
+            FROM wan_dns_samples d
+            JOIN (
+                SELECT resolver_key,MAX(id) AS max_id
+                FROM wan_dns_samples
+                GROUP BY resolver_key
+            ) x ON x.max_id=d.id
+            ORDER BY d.resolver_name COLLATE NOCASE ASC
+        """).fetchall()
+
+        dns_history=c.execute("""
+            SELECT *
+            FROM wan_dns_samples
+            WHERE ts>=?
+            ORDER BY id DESC
+            LIMIT ?
+        """,(cutoff,limit)).fetchall()
+
+        c.close()
+
+        targets=[dict(r) for r in target_rows]
+        internet_targets=[r for r in targets if r.get("target_type")=="INTERNET"]
+        gateway_targets=[r for r in targets if r.get("target_type")=="GATEWAY"]
+
+        total_sent=sum(int(r.get("sent") or 0) for r in internet_targets)
+        total_received=sum(int(r.get("received") or 0) for r in internet_targets)
+        reachability=(float(total_received)/total_sent*100.0) if total_sent else None
+        avg_latency=None
+        avg_jitter=None
+        valid_latency=[float(r["avg_ms"]) for r in internet_targets if r.get("avg_ms") is not None]
+        valid_jitter=[float(r["jitter_ms"]) for r in internet_targets if r.get("jitter_ms") is not None]
+        if valid_latency:
+            avg_latency=sum(valid_latency)/len(valid_latency)
+        if valid_jitter:
+            avg_jitter=sum(valid_jitter)/len(valid_jitter)
+
+        dns=[dict(r) for r in dns_rows]
+        dns_samples=sum(int(r.get("samples") or 0) for r in dns)
+        dns_successes=sum(int(r.get("successes") or 0) for r in dns)
+        dns_success_pct=(float(dns_successes)/dns_samples*100.0) if dns_samples else None
+        dns_lat=[float(r["avg_latency_ms"]) for r in dns if r.get("avg_latency_ms") is not None]
+        dns_avg=(sum(dns_lat)/len(dns_lat)) if dns_lat else None
+
+        return {
+            "hours":hours,
+            "reachabilityPct":reachability,
+            "avgLatencyMs":avg_latency,
+            "avgJitterMs":avg_jitter,
+            "gateway":gateway_targets[0] if gateway_targets else None,
+            "targets":targets,
+            "latestPing":[dict(r) for r in latest_ping],
+            "pingHistory":list(reversed([dict(r) for r in ping_history])),
+            "dnsSuccessPct":dns_success_pct,
+            "dnsAvgLatencyMs":dns_avg,
+            "dnsResolvers":dns,
+            "latestDns":[dict(r) for r in latest_dns],
+            "dnsHistory":list(reversed([dict(r) for r in dns_history])),
         }
