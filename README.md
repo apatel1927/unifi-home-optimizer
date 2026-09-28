@@ -2,8 +2,11 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.18.1
+## v0.18.2
 
+- Fixes the nearby-server button event handler so Load nearby servers actually requests and populates the Ookla list
+- Hardens parsing of official Ookla -L output and returns visible diagnostics on lookup/parse failures
+- Fixes false firewall warnings where zone-scoped ALLOW policies were incorrectly treated as unrestricted any-to-any rules
 - Official Ookla Speedtest CLI replaces the legacy Python speedtest client
 - Nearby server picker lets you keep Ookla automatic selection or lock tests to a specific nearby server ID
 - Completed speed tests now store server provider, location, country, server ID, host, jitter and packet loss when available
