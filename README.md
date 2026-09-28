@@ -2,8 +2,12 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.18.0
+## v0.18.1
 
+- Official Ookla Speedtest CLI replaces the legacy Python speedtest client
+- Nearby server picker lets you keep Ookla automatic selection or lock tests to a specific nearby server ID
+- Completed speed tests now store server provider, location, country, server ID, host, jitter and packet loss when available
+- Speed Test page shows jitter and packet loss alongside ping/download/upload
 - Read-only Network Audit page checks security, firewall, segmentation, Wi-Fi, wired links, WAN, DHCP/DNS and device health
 - Category scorecards for Security, Firewall, Segmentation, Wi-Fi, Wired, WAN, DHCP/DNS and Device Health
 - Findings use PASS / REVIEW / WARNING / CRITICAL so context-dependent settings are not mislabeled as failures
@@ -182,7 +186,7 @@ The Topology page uses device uplink relationships returned by UniFi to build a 
 
 ## Speed test server selection
 
-Each speed test creates a Speedtest client and calls get_best_server before download/upload testing. The selected Speedtest.net-compatible server can therefore change between runs. The completed result stores the exact server name/location, sponsor, server ID, distance, and ping when returned by the test service.
+Speed tests use the official Ookla Speedtest CLI. Automatic mode lets Ookla choose a nearby server using its native selection logic. The Speed Test page can also list nearby Ookla servers and lock all tests to a selected server ID, which is useful when ISP IP geolocation causes a bad automatic choice. Completed results store the exact server/provider/location/country/ID plus ping, jitter and packet loss when returned.
 
 
 ## Network audit
