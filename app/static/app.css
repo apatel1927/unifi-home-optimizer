@@ -568,3 +568,42 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 @media(max-width:540px){
   .speedtest-controls{grid-template-columns:1fr}
 }
+
+
+/* v0.15.0 traffic analytics */
+.traffic-range-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.traffic-range-controls .search{min-width:150px}
+.traffic-summary-grid{margin-bottom:16px}
+.traffic-two-column{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:18px;
+}
+.traffic-bars{display:flex;flex-direction:column;gap:12px;min-height:210px}
+.traffic-bar-row{display:flex;flex-direction:column;gap:6px}
+.traffic-bar-label{display:flex;justify-content:space-between;gap:14px;font-size:12px}
+.traffic-bar-label span{color:#dbe7f6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.traffic-bar-label b{font-size:11px;color:var(--muted);white-space:nowrap}
+.traffic-bar-track{
+  height:9px;
+  overflow:hidden;
+  border-radius:999px;
+  background:#152338;
+  border:1px solid rgba(255,255,255,.04);
+}
+.traffic-bar-fill{
+  height:100%;
+  border-radius:inherit;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  box-shadow:0 0 12px rgba(79,140,255,.25);
+}
+.traffic-filter-grid{grid-template-columns:repeat(4,minmax(150px,1fr))}
+@media(max-width:1050px){
+  .traffic-two-column{grid-template-columns:1fr}
+  .traffic-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:600px){
+  .traffic-range-controls{width:100%}
+  .traffic-range-controls .search{flex:1}
+  .traffic-filter-grid{grid-template-columns:1fr}
+}
