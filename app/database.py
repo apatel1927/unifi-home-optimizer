@@ -263,6 +263,17 @@ class Database:
             ON wired_port_events(ts);
         CREATE INDEX IF NOT EXISTS idx_wired_port_events_device_port_ts
             ON wired_port_events(device_id,port_idx,ts);
+        CREATE TABLE IF NOT EXISTS ai_reports(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            trigger TEXT NOT NULL,
+            model TEXT,
+            status TEXT NOT NULL,
+            summary TEXT,
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_reports_ts
+            ON ai_reports(ts);
         CREATE TABLE IF NOT EXISTS health_history(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -338,6 +349,8 @@ class Database:
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('speedtest_enabled','1')")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('speedtest_interval_hours','6')")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('speedtest_preferred_server_id','')")
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('ai_auto_enabled','0')")
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('ai_interval_hours','6')")
         c.commit()
         c.close()
 
@@ -790,9 +803,31 @@ class Database:
         c.close()
         return [dict(r) for r in rows]
 
+    def record_ai_report(self, trigger, model, status, summary=None, error=None):
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        c.execute("""
+            INSERT INTO ai_reports(ts,trigger,model,status,summary,error)
+            VALUES(?,?,?,?,?,?)
+        """,(now,trigger,model,status,summary,error))
+        c.execute("DELETE FROM ai_reports WHERE ts < ?",(cutoff,))
+        c.commit()
+        row=c.execute("SELECT * FROM ai_reports ORDER BY id DESC LIMIT 1").fetchone()
+        c.close()
+        return dict(row) if row else None
+
+    def ai_report_history(self, limit=20):
+        c=self.connect()
+        rows=c.execute("""
+            SELECT * FROM ai_reports ORDER BY id DESC LIMIT ?
+        """,(limit,)).fetchall()
+        c.close()
+        return [dict(r) for r in rows]
+
     def database_stats(self):
         c=self.connect()
-        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples","wan_ping_samples","wan_dns_samples","wired_port_state","wired_port_events"]
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples","wan_ping_samples","wan_dns_samples","wired_port_state","wired_port_events","ai_reports"]
         counts={}
         for table in tables:
             try:
