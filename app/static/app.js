@@ -15,7 +15,8 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="speedtest") loadSpeedtest();
     if(btn.dataset.page==="channels") loadChannelPlan();
     if(btn.dataset.page==="system") loadSystem();
-    if(btn.dataset.page==="topology") renderTopology();
+    if(btn.dataset.page==="topology") loadTopology();
+    if(btn.dataset.page==="switches") loadWiredAudit();
     if(btn.dataset.page==="audit") loadNetworkAudit();
   });
 });
@@ -370,11 +371,44 @@ document.querySelectorAll("[data-client-sort]").forEach(th=>{
   });
 });
 
+let wiredAuditData=null;
+let topologyLinkMap=new Map();
+
+function wiredStatusClass(status){
+  if(status==="GOOD"||status==="NORMAL")return "ALREADY_OPTIMIZED";
+  if(status==="WARNING")return "NEEDS_ATTENTION";
+  if(status==="REVIEW")return "PROTECTED";
+  return "PROTECTED";
+}
+function wiredScoreClass(v){
+  if(v==null)return "info";
+  if(v>=90)return "good";
+  if(v>=75)return "info";
+  if(v>=60)return "warn";
+  return "bad";
+}
+function wiredLinkSpeed(v){
+  if(v==null)return "—";
+  const n=Number(v);
+  if(n>=1000)return (n/1000).toFixed(n%1000===0?0:1)+" Gbps";
+  return n.toFixed(0)+" Mbps";
+}
+function topologyLinkDetail(device){
+  const link=topologyLinkMap.get(device.id);
+  if(!link)return "";
+  const bits=[];
+  if(link.parentPortIdx!=null)bits.push("Port "+link.parentPortIdx);
+  if(link.speedMbps!=null)bits.push(wiredLinkSpeed(link.speedMbps));
+  if(link.poePowerW!=null&&Number(link.poePowerW)>0)bits.push("PoE "+Number(link.poePowerW).toFixed(1)+" W");
+  if(!bits.length)return "";
+  return '<div class="topology-link-detail '+String(link.status||"").toLowerCase()+'">'+bits.map(esc).join(" · ")+'</div>';
+}
+
 function topologyNodeTypeClass(type){
-  if(type==="GATEWAY")return "gateway";
-  if(type==="SWITCH")return "switch";
-  if(type==="ACCESS_POINT")return "ap";
-  return "device";
+  if(type==="GATEWAY")return "topo-gateway";
+  if(type==="SWITCH")return "topo-switch";
+  if(type==="ACCESS_POINT")return "topo-ap";
+  return "topo-device-other";
 }
 
 function topologyIcon(type){
@@ -449,6 +483,7 @@ function topologyDeviceHtml(device,childrenMap,clientsMap,seen,depth=0){
         '<span>'+esc(type.replace("_"," "))+' · '+esc(device.model||"—")+' · '+esc(ip)+'</span>'+
         (device.uplinkName?'<span class="muted">Uplink: '+esc(device.uplinkName)+'</span>':"")+
         topologyRadioSummary(device)+
+        topologyLinkDetail(device)+
       '</div>'+
       '<div class="topology-counts">'+
         (type==="ACCESS_POINT"?'<span>'+esc(device.clientCount||0)+' clients</span>':"")+
@@ -457,6 +492,18 @@ function topologyDeviceHtml(device,childrenMap,clientsMap,seen,depth=0){
     '</div>'+
     (childHtml||clientHtml?'<div class="topology-children">'+childHtml+clientHtml+'</div>':"")+
   '</div>';
+}
+
+async function loadTopology(){
+  try{
+    const r=await fetch("/api/wired-audit",{cache:"no-store"});
+    const d=await r.json();
+    if(d.ok){
+      wiredAuditData=d;
+      topologyLinkMap=new Map((d.links||[]).filter(x=>x.childDeviceId).map(x=>[x.childDeviceId,x]));
+    }
+  }catch(e){}
+  renderTopology();
 }
 
 function renderTopology(){
@@ -682,6 +729,143 @@ async function loadNetworkAudit(){
   const el=document.getElementById(id);
   if(!el)return;
   el.addEventListener(id==="auditSearch"?"input":"change",renderAuditFindings);
+});
+
+
+function filteredWiredPorts(){
+  const rows=(wiredAuditData?.ports||[]);
+  const q=(document.getElementById("wiredSearch")?.value||"").trim().toLowerCase();
+  const sw=document.getElementById("wiredSwitchFilter")?.value||"";
+  const status=document.getElementById("wiredStatusFilter")?.value||"";
+  const activeOnly=document.getElementById("wiredActiveOnly")?.checked!==false;
+  return rows.filter(x=>{
+    if(activeOnly && x.state!=="UP")return false;
+    if(sw && x.deviceName!==sw)return false;
+    if(status && x.status!==status)return false;
+    if(q){
+      const vals=[
+        x.deviceName,x.portIdx,x.portName,x.endpointName,x.endpointIp,x.endpointMac,
+        x.endpointModel,x.endpointNetwork,x.endpointVlan,x.profile,x.nativeVlan,x.status,x.reason
+      ];
+      if(!vals.some(v=>String(v??"").toLowerCase().includes(q)))return false;
+    }
+    return true;
+  });
+}
+
+function renderWiredAudit(d){
+  wiredAuditData=d;
+  topologyLinkMap=new Map((d.links||[]).filter(x=>x.childDeviceId).map(x=>[x.childDeviceId,x]));
+  const s=d.summary||{};
+  const set=(id,val,cls)=>{
+    const el=document.getElementById(id);if(!el)return;
+    el.textContent=val;
+    if(cls!==undefined)el.className="big "+cls;
+  };
+  set("wiredScore",d.score==null?"—":String(d.score),wiredScoreClass(d.score));
+  set("wiredActive",s.active??0);
+  set("wiredGood",s.good??0,"good");
+  set("wiredNormal",s.normal??0,"good");
+  set("wiredReview",s.review??0,"info");
+  set("wiredWarning",s.warning??0,"warn");
+  set("wiredPoe",s.poe??0);
+  set("wiredFlapping",s.flapping??0,(Number(s.flapping||0)>0?"warn":"good"));
+
+  const notice=document.getElementById("wiredAuditNotice");
+  if(notice){
+    if(!d.classicAvailable){
+      notice.innerHTML='<b class="warn">Limited wired visibility</b><br><span class="muted">Official UniFi data is available, but classic/private switch telemetry was not returned. Endpoint, PoE and port-detail visibility may be incomplete.</span>';
+    }else if(Number(s.warning||0)>0){
+      notice.innerHTML='<b class="warn">'+esc(s.warning)+' wired warning'+(Number(s.warning)===1?"":"s")+'</b><br><span class="muted">'+esc(s.active||0)+' active ports analyzed · '+esc(s.review||0)+' need review · '+esc(s.normal||0)+' expected low-speed links.</span>';
+    }else{
+      notice.innerHTML='<b class="good">No wired warnings</b><br><span class="muted">'+esc(s.active||0)+' active ports analyzed · '+esc(s.review||0)+' need review · '+esc(s.normal||0)+' expected low-speed links.</span>';
+    }
+  }
+
+  const switchSelect=document.getElementById("wiredSwitchFilter");
+  if(switchSelect){
+    const current=switchSelect.value;
+    const values=[...new Set((d.ports||[]).map(x=>x.deviceName).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    switchSelect.innerHTML='<option value="">All switches</option>'+values.map(v=>'<option>'+esc(v)+'</option>').join("");
+    if(values.includes(current))switchSelect.value=current;
+  }
+  renderWiredPortTable();
+  renderWiredEvents();
+}
+
+function renderWiredPortTable(){
+  const table=document.getElementById("wiredPortTable");
+  if(!table||!wiredAuditData)return;
+  const order={WARNING:0,REVIEW:1,NORMAL:2,GOOD:3,UNUSED:4};
+  const rows=filteredWiredPorts().sort((a,b)=>
+    (order[a.status]??9)-(order[b.status]??9)||
+    String(a.deviceName||"").localeCompare(String(b.deviceName||""))||
+    Number(a.portIdx||0)-Number(b.portIdx||0)
+  );
+  table.innerHTML=rows.length?rows.map(x=>{
+    const endpoint=x.endpointName||"—";
+    const endpointDetail=[
+      x.endpointIp,
+      x.endpointModel,
+      x.endpointNetwork,
+      x.endpointVlan!=null?"VLAN "+x.endpointVlan:null
+    ].filter(Boolean).join(" · ");
+    const poe=x.poeState==="POWERING"
+      ?("POWERING"+(x.poePowerW!=null?" · "+Number(x.poePowerW).toFixed(1)+" W":""))
+      :(x.poeState||"—");
+    const traffic=[x.rxRateBps!=null?"RX "+rateMbps(x.rxRateBps):null,x.txRateBps!=null?"TX "+rateMbps(x.txRateBps):null].filter(Boolean).join(" / ")||"—";
+    const errors=(Number(x.rxErrors||0)+Number(x.txErrors||0))+" err · "+(Number(x.rxDrops||0)+Number(x.txDrops||0))+" drop";
+    const profile=[x.nativeVlan!=null?"VLAN "+x.nativeVlan:null,x.profile].filter(Boolean).join(" · ")||"—";
+    const changes=(Number(x.stateChanges24h||0))+" state · "+(Number(x.speedChanges24h||0))+" speed";
+    return '<tr>'+
+      '<td><b>'+esc(x.deviceName)+'</b><div class="muted">Port '+esc(x.portIdx)+(x.portName?" · "+esc(x.portName):"")+'</div></td>'+
+      '<td><b>'+esc(endpoint)+'</b><div class="muted">'+esc(endpointDetail||x.endpointType||"No mapped endpoint")+'</div></td>'+
+      '<td><b>'+esc(x.state)+'</b><div class="muted">'+esc(wiredLinkSpeed(x.speedMbps))+'</div></td>'+
+      '<td>'+esc(wiredLinkSpeed(x.maxSpeedMbps))+'</td>'+
+      '<td>'+esc(poe)+'</td>'+
+      '<td>'+esc(traffic)+'</td>'+
+      '<td>'+esc(errors)+'</td>'+
+      '<td>'+esc(profile)+'</td>'+
+      '<td>'+esc(changes)+(x.lastEvent?'<div class="muted">'+esc(fmtShortDate(x.lastEvent))+'</div>':"")+'</td>'+
+      '<td><span class="status-tag '+wiredStatusClass(x.status)+'">'+esc(x.status)+'</span><div class="muted wired-reason">'+esc(x.reason)+'</div></td>'+
+    '</tr>';
+  }).join(""):'<tr><td colspan="10"><div class="empty">No ports match the selected filters.</div></td></tr>';
+}
+
+function renderWiredEvents(){
+  const table=document.getElementById("wiredEventTable");
+  if(!table||!wiredAuditData)return;
+  const rows=wiredAuditData.events||[];
+  table.innerHTML=rows.length?rows.map(x=>
+    '<tr>'+
+      '<td>'+esc(fmtDateTime(x.ts))+'</td>'+
+      '<td>'+esc(x.device_name||"—")+'</td>'+
+      '<td>'+esc(x.port_idx??"—")+'</td>'+
+      '<td>'+esc(x.event_type||"—")+'</td>'+
+      '<td>'+esc(x.from_value??"—")+'</td>'+
+      '<td>'+esc(x.to_value??"—")+'</td>'+
+      '<td>'+esc(x.endpoint_name||"—")+'</td>'+
+    '</tr>'
+  ).join(""):'<tr><td colspan="7"><div class="empty">No wired link changes recorded in the last 24 hours.</div></td></tr>';
+}
+
+async function loadWiredAudit(){
+  const notice=document.getElementById("wiredAuditNotice");
+  if(notice)notice.innerHTML='<b class="info">Reading switch telemetry…</b><br><span class="muted">Mapping ports, endpoints, negotiated speed, PoE and recent link changes.</span>';
+  try{
+    const r=await fetch("/api/wired-audit",{cache:"no-store"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Unable to load wired audit");
+    renderWiredAudit(d);
+  }catch(e){
+    if(notice)notice.innerHTML='<b class="bad">Wired audit failed</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }
+}
+
+["wiredSearch","wiredSwitchFilter","wiredStatusFilter","wiredActiveOnly"].forEach(id=>{
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.addEventListener(id==="wiredSearch"?"input":"change",renderWiredPortTable);
 });
 
 
