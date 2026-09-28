@@ -607,3 +607,17 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
   .traffic-range-controls .search{flex:1}
   .traffic-filter-grid{grid-template-columns:1fr}
 }
+
+
+/* v0.16.0 WAN quality */
+.wan-quality-grid{margin-bottom:16px}
+.chart-line-loss{stroke:#ff9b6a;stroke-width:2.5}
+.chart-line-jitter{stroke:#c695ff;stroke-width:2.5}
+.chart-line-dns{stroke:#65d7c0;stroke-width:2.5}
+#wanTargetTable td,#wanDnsTable td{white-space:nowrap}
+@media(max-width:700px){
+  .wan-quality-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:520px){
+  .wan-quality-grid{grid-template-columns:1fr}
+}
