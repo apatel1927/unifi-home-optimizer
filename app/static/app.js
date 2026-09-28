@@ -1292,6 +1292,15 @@ async function runSpeedtestNow(){
 }
 
 document.getElementById("runSpeedtestBtn")?.addEventListener("click",runSpeedtestNow);
+document.getElementById("loadSpeedtestServersBtn")?.addEventListener("click",loadSpeedtestServers);
+document.getElementById("speedtestPreferredServer")?.addEventListener("change",async e=>{
+  await fetch("/api/speedtest/settings",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({preferredServerId:e.target.value})
+  });
+  await loadSpeedtest();
+});
 document.getElementById("speedtestAutoToggle")?.addEventListener("change",async e=>{
   await fetch("/api/speedtest/settings",{
     method:"POST",
