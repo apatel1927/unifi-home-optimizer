@@ -15,10 +15,11 @@ from .database import Database
 from .unifi_api import UniFiAPI
 from .private_unifi import PrivateUniFiAPI
 from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, build_channel_plan, radio_conflict_key
+from .audit import build_network_audit
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.17.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.18.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -1107,6 +1108,23 @@ def speedtest_settings():
         except Exception:
             return jsonify({"ok":False,"error":"Invalid speed test interval"}),400
     return jsonify({"ok":True,**_speedtest_state()})
+
+@app.route("/api/network-audit")
+def network_audit():
+    try:
+        snap=build_snapshot(api)
+        if not snap:
+            return jsonify({"ok":False,"error":"Unable to retrieve UniFi data"}),500
+        result=build_network_audit(snap,api)
+        return jsonify({
+            "ok":True,
+            "generatedAt":datetime.now(timezone.utc).isoformat(),
+            **result
+        })
+    except Exception as e:
+        print("Network audit error:",e,flush=True)
+        traceback.print_exc()
+        return jsonify({"ok":False,"error":str(e)}),500
 
 @app.route("/api/wan-quality")
 def wan_quality():
