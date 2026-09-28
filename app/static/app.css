@@ -636,9 +636,9 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 .topology-internet-line{width:2px;height:20px;background:rgba(108,145,194,.28)}
 .topology-branch{position:relative;margin:0 0 8px}
 .topology-device{display:grid;grid-template-columns:42px minmax(220px,1fr) auto;gap:12px;align-items:center;padding:13px 14px;border-radius:13px;border:1px solid rgba(100,137,187,.14);background:rgba(11,22,37,.92);min-width:520px}
-.topology-device.gateway{border-color:rgba(79,140,255,.34);background:rgba(25,48,78,.52)}
-.topology-device.switch{border-color:rgba(105,211,174,.22)}
-.topology-device.ap{border-color:rgba(198,149,255,.23)}
+.topology-device.topo-gateway{border-color:rgba(79,140,255,.34);background:rgba(25,48,78,.52)}
+.topology-device.topo-switch{border-color:rgba(105,211,174,.22)}
+.topology-device.topo-ap{border-color:rgba(198,149,255,.23)}
 .topology-device-icon,.topology-client-icon{display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:10px;background:rgba(79,140,255,.12);border:1px solid rgba(79,140,255,.2);color:#c8d9f7;font-size:10px;font-weight:900}
 .topology-device-copy>span{display:block;margin-top:3px;color:var(--muted);font-size:11px}
 .topology-device-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -729,4 +729,35 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 @media(max-width:800px){
   .speedtest-server-controls{grid-template-columns:1fr}
   .speedtest-server-picker{flex-direction:column;align-items:stretch}
+}
+
+
+/* v0.19.0 deep wired audit + topology link detail */
+.topology-link-detail{
+  display:inline-flex;
+  gap:6px;
+  align-items:center;
+  margin-top:7px;
+  padding:4px 7px;
+  border-radius:8px;
+  background:rgba(79,140,255,.08);
+  border:1px solid rgba(79,140,255,.14);
+  color:#b9cbea;
+  font-size:9px;
+  font-weight:700;
+}
+.topology-link-detail.warning{border-color:rgba(255,190,88,.25);color:#ffd06a}
+.topology-link-detail.review{border-color:rgba(125,176,255,.22);color:#9fc4ff}
+.topology-link-detail.normal,.topology-link-detail.good{border-color:rgba(84,223,168,.2);color:#7ce7bc}
+
+.wired-summary-grid{margin-bottom:16px}
+.wired-filter-panel{margin-bottom:16px}
+.wired-active-toggle{align-self:end;padding-bottom:2px}
+.wired-port-table-panel table{min-width:1420px}
+.wired-port-table-panel td{vertical-align:top}
+.wired-port-table-panel td b{font-size:11px;color:#e6eef9}
+.wired-reason{max-width:280px;white-space:normal;line-height:1.35;margin-top:4px}
+#wiredEventTable td{white-space:nowrap}
+@media(max-width:900px){
+  .wired-port-table-panel{overflow-x:auto}
 }
