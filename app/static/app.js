@@ -10,6 +10,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="history") loadHistory();
     if(btn.dataset.page==="roaming") loadRoaming();
     if(btn.dataset.page==="internet") loadInternet();
+    if(btn.dataset.page==="wanquality") loadWanQuality();
     if(btn.dataset.page==="traffic") loadTraffic();
     if(btn.dataset.page==="speedtest") loadSpeedtest();
     if(btn.dataset.page==="channels") loadChannelPlan();
@@ -486,6 +487,132 @@ async function loadInternet(){
   const d=await r.json();
   if(d.ok)renderInternet(d,report?.gateway);
 }
+
+
+let wanQualityData=null;
+
+function pct(v,digits=2){
+  return v==null?"—":Number(v).toFixed(digits)+"%";
+}
+function qualityClass(score){
+  if(score==null)return "info";
+  if(score>=90)return "good";
+  if(score>=75)return "info";
+  if(score>=60)return "warn";
+  return "bad";
+}
+function metricClassLower(v,good,watch,bad){
+  if(v==null)return "";
+  if(v<=good)return "good";
+  if(v<=watch)return "info";
+  if(v<=bad)return "warn";
+  return "bad";
+}
+function renderWanQuality(d){
+  wanQualityData=d;
+  const set=(id,value,cls)=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    el.textContent=value;
+    if(cls!==undefined)el.className="big "+cls;
+  };
+
+  set("wanQualityScore",d.score==null?"—":String(d.score),qualityClass(d.score));
+  const reach=d.reachabilityPct;
+  set("wanReachability",pct(reach,3),reach==null?"info":reach>=99.9?"good":reach>=99?"info":reach>=97?"warn":"bad");
+  set("wanAvgLatency",d.avgLatencyMs==null?"—":Number(d.avgLatencyMs).toFixed(1)+" ms",metricClassLower(d.avgLatencyMs,30,60,100));
+  set("wanAvgJitter",d.avgJitterMs==null?"—":Number(d.avgJitterMs).toFixed(1)+" ms",metricClassLower(d.avgJitterMs,5,10,20));
+  const dnsSuccess=d.dnsSuccessPct;
+  set("wanDnsSuccess",pct(dnsSuccess,2),dnsSuccess==null?"info":dnsSuccess>=99.9?"good":dnsSuccess>=99?"info":dnsSuccess>=97?"warn":"bad");
+  set("wanDnsLatency",d.dnsAvgLatencyMs==null?"—":Number(d.dnsAvgLatencyMs).toFixed(1)+" ms",metricClassLower(d.dnsAvgLatencyMs,30,60,120));
+  const gw=d.gateway||{};
+  set("wanGatewayLatency",gw.avg_ms==null?"—":Number(gw.avg_ms).toFixed(1)+" ms",metricClassLower(gw.avg_ms,5,15,30));
+  const last=document.getElementById("wanLastSample");
+  if(last)last.textContent=d.lastSampleAt?fmtShortDate(d.lastSampleAt):"Learning…";
+
+  const notice=document.getElementById("wanQualityNotice");
+  if(notice){
+    if(d.lastError){
+      notice.innerHTML='<b class="warn">Some WAN probes reported errors</b><br><span class="muted">'+esc(d.lastError)+'</span>';
+    }else if(!d.lastSampleAt){
+      notice.innerHTML='<b class="info">Learning WAN quality</b><br><span class="muted">The first multi-target probe will be stored automatically by the monitor.</span>';
+    }else{
+      notice.innerHTML='<b class="good">WAN quality monitoring active</b><br><span class="muted">ICMP every '+esc(d.sampleIntervalSeconds||60)+' seconds · DNS every '+Math.round(Number(d.dnsSampleIntervalSeconds||300)/60)+' minutes · selected range '+esc(trafficRangeLabel(d.hours||24))+'.</span>';
+    }
+  }
+
+  const ps=d.pingSeries||[];
+  const lat=ps.map(x=>typeof x.avg_ms==="number"?x.avg_ms:null);
+  const loss=ps.map(x=>typeof x.packet_loss_pct==="number"?x.packet_loss_pct:null);
+  const jitter=ps.map(x=>typeof x.jitter_ms==="number"?x.jitter_ms:null);
+  const maxLat=Math.max(30,...lat.filter(Number.isFinite));
+  const maxLoss=Math.max(5,...loss.filter(Number.isFinite));
+  const maxJitter=Math.max(10,...jitter.filter(Number.isFinite));
+
+  const latChart=document.getElementById("wanLatencyChart");
+  if(latChart)latChart.innerHTML=chartGrid()+svgLine(lat,maxLat,"chart-line-latency");
+  const lossChart=document.getElementById("wanLossChart");
+  if(lossChart)lossChart.innerHTML=chartGrid()+svgLine(loss,maxLoss,"chart-line-loss");
+  const jitterChart=document.getElementById("wanJitterChart");
+  if(jitterChart)jitterChart.innerHTML=chartGrid()+svgLine(jitter,maxJitter,"chart-line-jitter");
+
+  const ds=d.dnsSeries||[];
+  const dnsLat=ds.map(x=>typeof x.avg_latency_ms==="number"?x.avg_latency_ms:null);
+  const maxDns=Math.max(30,...dnsLat.filter(Number.isFinite));
+  const dnsChart=document.getElementById("wanDnsChart");
+  if(dnsChart)dnsChart.innerHTML=chartGrid()+svgLine(dnsLat,maxDns,"chart-line-dns");
+
+  const targetTable=document.getElementById("wanTargetTable");
+  if(targetTable){
+    const rows=d.targets||[];
+    targetTable.innerHTML=rows.length?rows.map(x=>
+      '<tr>'+
+        '<td><b>'+esc(x.target_name)+'</b></td>'+
+        '<td>'+esc(x.target_type)+'</td>'+
+        '<td class="client-ip">'+esc(x.target_host)+'</td>'+
+        '<td>'+esc(x.sent||0)+'</td>'+
+        '<td>'+esc(x.received||0)+'</td>'+
+        '<td class="'+(Number(x.packet_loss_pct||0)===0?"good":Number(x.packet_loss_pct||0)<1?"info":Number(x.packet_loss_pct||0)<5?"warn":"bad")+'">'+esc(pct(x.packet_loss_pct,2))+'</td>'+
+        '<td>'+esc(x.avg_ms==null?"—":Number(x.avg_ms).toFixed(1)+" ms")+'</td>'+
+        '<td>'+esc(x.jitter_ms==null?"—":Number(x.jitter_ms).toFixed(1)+" ms")+'</td>'+
+        '<td>'+esc((x.min_ms==null?"—":Number(x.min_ms).toFixed(1))+" / "+(x.max_ms==null?"—":Number(x.max_ms).toFixed(1))+" ms")+'</td>'+
+      '</tr>'
+    ).join(""):'<tr><td colspan="9"><div class="empty">No WAN ping samples yet.</div></td></tr>';
+  }
+
+  const dnsTable=document.getElementById("wanDnsTable");
+  if(dnsTable){
+    const rows=d.dnsResolvers||[];
+    dnsTable.innerHTML=rows.length?rows.map(x=>
+      '<tr>'+
+        '<td><b>'+esc(x.resolver_name)+'</b></td>'+
+        '<td class="client-ip">'+esc(x.resolver_host||"System")+'</td>'+
+        '<td>'+esc(x.samples||0)+'</td>'+
+        '<td class="'+(Number(x.success_pct||0)>=99.9?"good":Number(x.success_pct||0)>=99?"info":Number(x.success_pct||0)>=97?"warn":"bad")+'">'+esc(pct(x.success_pct,2))+'</td>'+
+        '<td>'+esc(x.avg_latency_ms==null?"—":Number(x.avg_latency_ms).toFixed(1)+" ms")+'</td>'+
+        '<td>'+esc(x.min_latency_ms==null?"—":Number(x.min_latency_ms).toFixed(1)+" ms")+'</td>'+
+        '<td>'+esc(x.max_latency_ms==null?"—":Number(x.max_latency_ms).toFixed(1)+" ms")+'</td>'+
+      '</tr>'
+    ).join(""):'<tr><td colspan="7"><div class="empty">No DNS probe history yet.</div></td></tr>';
+  }
+}
+
+async function loadWanQuality(){
+  const hours=Number(document.getElementById("wanQualityRange")?.value||24);
+  try{
+    const r=await fetch("/api/wan-quality?hours="+encodeURIComponent(hours),{cache:"no-store"});
+    const d=await r.json();
+    if(d.ok)renderWanQuality(d);
+  }catch(e){
+    const notice=document.getElementById("wanQualityNotice");
+    if(notice)notice.innerHTML='<b class="warn">Unable to load WAN quality</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }
+}
+
+document.getElementById("wanQualityRange")?.addEventListener("change",loadWanQuality);
+setInterval(()=>{
+  if(document.querySelector("#wanquality.page.active"))loadWanQuality();
+},30000);
 
 
 let trafficData=null;
