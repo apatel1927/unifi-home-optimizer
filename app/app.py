@@ -18,10 +18,11 @@ from .unifi_api import UniFiAPI
 from .private_unifi import PrivateUniFiAPI
 from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, build_channel_plan, radio_conflict_key
 from .audit import build_network_audit
+from .wired_audit import build_wired_audit
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.18.2"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.19.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -46,6 +47,7 @@ last_monitor_error = None
 private_rf_last_discovery = None
 private_rf_last_error = None
 private_client_cache = {"ts":0.0,"items":[]}
+private_device_cache = {"ts":0.0,"items":[]}
 speedtest_lock = threading.Lock()
 speedtest_running = False
 speedtest_started_at = None
@@ -194,6 +196,22 @@ def _wan_quality_score(summary):
 
 def _norm_mac(value):
     return str(value or "").lower().replace("-",":").strip()
+
+def _classic_devices_cached():
+    if not private_api.configured:
+        return []
+    now=time.time()
+    if private_device_cache["items"] and now-private_device_cache["ts"] < 30:
+        return private_device_cache["items"]
+    try:
+        items=private_api.devices()
+        if isinstance(items,list):
+            private_device_cache["items"]=items
+            private_device_cache["ts"]=now
+            return items
+    except Exception as e:
+        print("Classic device inventory error:",e,flush=True)
+    return private_device_cache["items"]
 
 def _classic_clients_cached():
     if not private_api.configured:
@@ -447,6 +465,19 @@ def _enrich_client_inventory(snapshot):
         row["channel"]=classic.get("channel")
         row["clientSource"]="official+classic" if classic else "official"
     return clients
+
+def _wired_audit_for_snapshot(snapshot, include_events=True):
+    classic_devices=_classic_devices_cached()
+    classic_clients=_classic_clients_cached()
+    events=db.wired_port_event_summary(24) if include_events else {}
+    recent=db.wired_recent_events(24,200) if include_events else []
+    return build_wired_audit(
+        snapshot,
+        classic_devices=classic_devices,
+        classic_clients=classic_clients,
+        event_summary=events,
+        recent_events=recent,
+    )
 
 def report_data():
     global last_controller_success
@@ -1091,6 +1122,11 @@ def monitor_loop():
                     db.record_ap(ap)
                     db.record_radio_configs(ap)
                 db.record_wireless_clients(data["clients"])
+                try:
+                    wired_now=_wired_audit_for_snapshot(data,include_events=False)
+                    db.record_wired_ports(wired_now.get("ports") or [])
+                except Exception as e:
+                    print("Wired port monitor error:",e,flush=True)
                 if (time.monotonic()-traffic_last_sample_monotonic) >= traffic_sample_interval_seconds:
                     _sample_traffic(data)
                 if (time.monotonic()-wan_last_sample_monotonic) >= wan_quality_sample_seconds:
@@ -1213,13 +1249,31 @@ def speedtest_settings():
         db.set_setting("speedtest_preferred_server_id",value)
     return jsonify({"ok":True,**_speedtest_state()})
 
+@app.route("/api/wired-audit")
+def wired_audit():
+    try:
+        snap=build_snapshot(api)
+        if not snap:
+            return jsonify({"ok":False,"error":"Unable to retrieve UniFi data"}),500
+        result=_wired_audit_for_snapshot(snap)
+        return jsonify({
+            "ok":True,
+            "generatedAt":datetime.now(timezone.utc).isoformat(),
+            **result
+        })
+    except Exception as e:
+        print("Wired audit error:",e,flush=True)
+        traceback.print_exc()
+        return jsonify({"ok":False,"error":str(e)}),500
+
 @app.route("/api/network-audit")
 def network_audit():
     try:
         snap=build_snapshot(api)
         if not snap:
             return jsonify({"ok":False,"error":"Unable to retrieve UniFi data"}),500
-        result=build_network_audit(snap,api)
+        wired=_wired_audit_for_snapshot(snap)
+        result=build_network_audit(snap,api,wired_audit=wired)
         return jsonify({
             "ok":True,
             "generatedAt":datetime.now(timezone.utc).isoformat(),
