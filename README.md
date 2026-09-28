@@ -2,8 +2,11 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.20.0
+## v0.20.1
 
+- AI advisor now receives current Auto RF / Auto Optimize state and full stored RF test history
+- Prevents the advisor from treating official-API radio-write limitations as proof that validated private Auto RF is unavailable
+- Uses completed RF A/B/A history as stronger evidence than generic planner recommendations and avoids casually repeating previously worse tests
 - Export / AI tab creates a one-click sanitized support bundle for sharing with ChatGPT
 - Export formats include a ZIP with individual JSON sections, a single JSON file, and a compact copy-to-clipboard text summary
 - Export recursively redacts passwords, API keys, tokens, secrets and credentials while retaining useful local troubleshooting identifiers
