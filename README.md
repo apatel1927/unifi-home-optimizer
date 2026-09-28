@@ -2,8 +2,14 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.16.0
+## v0.17.0
 
+- Live Network Topology page builds the current Internet -> UDM -> switch/AP -> client tree from UniFi uplink relationships
+- Topology shows device state, model, IP, AP radio channels/widths, client counts, and downstream device counts
+- Client nodes show IP, type, VLAN, network, and SSID when available
+- Topology filters support client type, VLAN, network, show/hide clients, and compact client display
+- Devices without a trustworthy live parent are shown separately instead of having a path guessed
+- Speed Test page now explains automatic best-server selection and continues to store the exact server/sponsor/location/distance used by each completed test
 - WAN Quality page with continuous multi-target latency, packet-loss, jitter, gateway latency, and DNS reliability monitoring
 - Probes Cloudflare, Google, and Quad9 plus the local UDM gateway
 - ICMP samples run every 60 seconds with three probes per target; DNS samples run every 5 minutes
@@ -162,3 +168,12 @@ WAN Quality is measured independently from the existing HTTPS connectivity probe
 DNS quality is sampled separately using the system resolver, Cloudflare DNS, and Google DNS. The dashboard stores success rate and DNS response latency.
 
 The WAN quality score is an app-level summary for trend spotting, not an ISP SLA certification. Raw latency, packet-loss, jitter, and DNS metrics remain visible alongside it.
+
+
+## Network topology
+
+The Topology page uses device uplink relationships returned by UniFi to build a live logical tree. Connected clients are placed under the AP or switch reported as their current uplink. The app does not invent missing links; unresolved devices are shown separately.
+
+## Speed test server selection
+
+Each speed test creates a Speedtest client and calls get_best_server before download/upload testing. The selected Speedtest.net-compatible server can therefore change between runs. The completed result stores the exact server name/location, sponsor, server ID, distance, and ping when returned by the test service.
