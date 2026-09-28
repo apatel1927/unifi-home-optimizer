@@ -38,7 +38,7 @@ def _empty_filter(side):
     traffic=side.get("trafficFilter")
     return traffic in (None,{}) and not any(
         side.get(k) not in (None,{},[], "")
-        for k in ("networkId","networkIds","ipAddress","ipAddresses","port","ports")
+        for k in ("zoneId","zoneIds","networkId","networkIds","ipAddress","ipAddresses","port","ports")
     )
 
 
@@ -268,11 +268,20 @@ def build_network_audit(snapshot, api):
              "Confirm the disabled state is intentional.")
 
     for p in enabled_fw:
-        if _action_type(p)=="ALLOW" and _empty_filter(p.get("source")) and _empty_filter(p.get("destination")):
-            _add(findings,"WARNING","FIREWALL","Broad allow firewall policy needs review",
-                 "Enabled ALLOW policy appears to have broad/empty source and destination traffic filters.",
-                 p.get("name"),
-                 "Verify the source/destination zones and intended exposure before keeping this policy broad.")
+        metadata=p.get("metadata") or {}
+        origin=str(metadata.get("origin") or "").upper()
+        source=p.get("source") or {}
+        destination=p.get("destination") or {}
+        if _action_type(p)=="ALLOW" and _empty_filter(source) and _empty_filter(destination):
+            if origin in ("SYSTEM","SYSTEM_DEFINED","DEFAULT"):
+                _add(findings,"PASS","FIREWALL","System allow policy present",
+                     "A broad system-defined ALLOW policy is present and is not treated as a user-created exposure.",
+                     p.get("name"))
+            else:
+                _add(findings,"WARNING","FIREWALL","Broad allow firewall policy needs review",
+                     "Enabled ALLOW policy appears to have broad/empty source and destination scope with no zone/network restriction visible.",
+                     p.get("name"),
+                     "Verify this user-defined policy is intentionally broad.")
 
     if firewall_zones:
         _add(findings,"PASS","FIREWALL","Firewall zones discovered",
