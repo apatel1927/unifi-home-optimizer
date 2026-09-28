@@ -32,6 +32,7 @@
     <button class="nav" data-page="clients">Clients</button>
     <button class="nav" data-page="topology">Topology</button>
     <button class="nav" data-page="audit">Network Audit</button>
+    <button class="nav" data-page="exportai">Export / AI</button>
     <button class="nav" data-page="roaming">Roaming</button>
     <button class="nav" data-page="switches">Wired / Switches</button>
     <button class="nav" data-page="history">History</button>
@@ -668,6 +669,94 @@
       <div class="section-head"><h2>Audit policy</h2></div>
       <div class="panel notice">
         PASS means the current data supports a healthy configuration. REVIEW means the setting is context-dependent and deserves confirmation, not that it is wrong. WARNING and CRITICAL are reserved for stronger evidence such as offline devices, duplicate active IPs, open/unverified Wi-Fi security, or broad allow policies. Automatic configuration changes are intentionally disabled on this page.
+      </div>
+    </section>
+
+    <section id="exportai" class="page">
+      <div class="section-head">
+        <div>
+          <h2>Export & AI Advisor</h2>
+          <span class="muted">Create a sanitized support bundle to upload to ChatGPT, or optionally let an embedded AI advisor review the network.</span>
+        </div>
+      </div>
+
+      <div class="export-ai-grid">
+        <div class="panel export-card">
+          <span class="eyebrow">SHARE WITH CHATGPT</span>
+          <h3>One-click support bundle</h3>
+          <p class="muted">
+            Exports the current network audit, wired audit, WAN quality, speed tests, traffic summaries, topology/client inventory,
+            RF plan and recent optimizer history. Passwords, API keys, tokens and secrets are recursively redacted.
+          </p>
+          <div class="export-actions">
+            <button id="downloadSupportZipBtn">Download ZIP bundle</button>
+            <button id="downloadSupportJsonBtn" class="secondary">Download single JSON</button>
+            <button id="copySupportSummaryBtn" class="secondary">Copy compact summary</button>
+          </div>
+          <div id="exportStatus" class="muted export-status">
+            Local device names, MAC addresses and private IPs remain in the bundle because they are useful for troubleshooting.
+          </div>
+        </div>
+
+        <div class="panel export-card">
+          <span class="eyebrow">WHAT IS INCLUDED</span>
+          <h3>Support data</h3>
+          <div class="export-included-list">
+            <div><b>Network Audit</b><span>Security, firewall, VLAN, Wi-Fi, DHCP/DNS, wired and device-health findings</span></div>
+            <div><b>Wired / Switches</b><span>Ports, link speeds, PoE, recent errors/drops and link-change history</span></div>
+            <div><b>WAN & Speed</b><span>Packet loss, jitter, latency, DNS quality and Ookla test history</span></div>
+            <div><b>Topology & Clients</b><span>Current UniFi devices, uplinks, clients, VLANs and SSIDs</span></div>
+            <div><b>Optimization</b><span>Channel plan, RF test context and recent optimizer log</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <div>
+          <h2>Embedded AI advisor</h2>
+          <span class="muted">Optional cloud analysis using your own OpenAI API key. The AI is advisory and does not directly change network settings.</span>
+        </div>
+        <button id="runAiAnalysisBtn">Analyze network now</button>
+      </div>
+
+      <div id="aiAdvisorNotice" class="panel notice">
+        Checking AI configuration…
+      </div>
+
+      <div class="panel ai-controls">
+        <div>
+          <h3>Automatic AI review</h3>
+          <p class="muted">When enabled, the app periodically analyzes a sanitized network snapshot. It pauses during active RF A/B/A tests.</p>
+        </div>
+        <label class="switch"><input id="aiAutoToggle" type="checkbox"><span></span></label>
+        <label class="speedtest-interval">
+          <span>Analyze every</span>
+          <select id="aiInterval" class="search">
+            <option value="1">1 hour</option>
+            <option value="3">3 hours</option>
+            <option value="6">6 hours</option>
+            <option value="12">12 hours</option>
+            <option value="24">24 hours</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="summary-grid ai-summary-grid">
+        <div class="summary-card"><h3>AI status</h3><div id="aiConfigured" class="big compact-big">—</div><div id="aiConfiguredDetail" class="muted">—</div></div>
+        <div class="summary-card"><h3>Model</h3><div id="aiModel" class="big compact-big">—</div><div class="muted">Configured by OPENAI_MODEL</div></div>
+        <div class="summary-card"><h3>Automatic review</h3><div id="aiAutoStatus" class="big compact-big">—</div><div id="aiAutoDetail" class="muted">—</div></div>
+        <div class="summary-card"><h3>Last analysis</h3><div id="aiLastRun" class="big compact-big">—</div><div id="aiLastStatus" class="muted">—</div></div>
+      </div>
+
+      <div class="section-head"><h2>Latest AI analysis</h2></div>
+      <div class="panel ai-output-panel">
+        <pre id="aiOutput">No AI analysis has been run yet.</pre>
+      </div>
+
+      <div class="section-head"><h2>Automation safety policy</h2></div>
+      <div class="panel notice">
+        AI recommendations are advisory only. Existing deterministic automations such as Auto RF and Auto Optimize remain the execution layer.
+        A future approval workflow can let AI propose a whitelisted change, but firewall, VLAN, credentials and broad security changes should require explicit approval and rollback protection.
       </div>
     </section>
 
