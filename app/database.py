@@ -216,6 +216,11 @@ class Database:
             server_sponsor TEXT,
             server_id TEXT,
             server_distance_km REAL,
+            server_location TEXT,
+            server_country TEXT,
+            server_host TEXT,
+            jitter_ms REAL,
+            packet_loss_pct REAL,
             client_ip TEXT,
             duration_sec REAL,
             error TEXT
@@ -265,11 +270,24 @@ class Database:
             if col not in test_cols:
                 c.execute(f"ALTER TABLE optimization_tests ADD COLUMN {col} {ddl}")
 
+        speed_cols = {row[1] for row in c.execute("PRAGMA table_info(speedtest_results)").fetchall()}
+        speed_migrations = {
+            "server_location":"TEXT",
+            "server_country":"TEXT",
+            "server_host":"TEXT",
+            "jitter_ms":"REAL",
+            "packet_loss_pct":"REAL"
+        }
+        for col, ddl in speed_migrations.items():
+            if col not in speed_cols:
+                c.execute(f"ALTER TABLE speedtest_results ADD COLUMN {col} {ddl}")
+
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_optimize_enabled','0')")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_rf_enabled','0')")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('private_rf_write_verified','0')")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('speedtest_enabled','1')")
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('speedtest_interval_hours','6')")
+        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('speedtest_preferred_server_id','')")
         c.commit()
         c.close()
 
@@ -789,7 +807,9 @@ class Database:
 
     def record_speedtest(self, success, download_mbps=None, upload_mbps=None, ping_ms=None,
                          server_name=None, server_sponsor=None, server_id=None,
-                         server_distance_km=None, client_ip=None, duration_sec=None, error=None):
+                         server_distance_km=None, server_location=None, server_country=None,
+                         server_host=None, jitter_ms=None, packet_loss_pct=None,
+                         client_ip=None, duration_sec=None, error=None):
         now=datetime.now(timezone.utc).isoformat()
         cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
         c=self.connect()
@@ -797,12 +817,14 @@ class Database:
             INSERT INTO speedtest_results(
                 ts,success,download_mbps,upload_mbps,ping_ms,
                 server_name,server_sponsor,server_id,server_distance_km,
+                server_location,server_country,server_host,jitter_ms,packet_loss_pct,
                 client_ip,duration_sec,error
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,(
             now,1 if success else 0,download_mbps,upload_mbps,ping_ms,
             server_name,server_sponsor,str(server_id) if server_id is not None else None,
-            server_distance_km,client_ip,duration_sec,error
+            server_distance_km,server_location,server_country,server_host,jitter_ms,packet_loss_pct,
+            client_ip,duration_sec,error
         ))
         c.execute("DELETE FROM speedtest_results WHERE ts < ?",(cutoff,))
         c.commit()
