@@ -16,6 +16,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="channels") loadChannelPlan();
     if(btn.dataset.page==="system") loadSystem();
     if(btn.dataset.page==="topology") renderTopology();
+    if(btn.dataset.page==="audit") loadNetworkAudit();
   });
 });
 
@@ -538,6 +539,149 @@ function renderTopology(){
   const el=document.getElementById(id);
   if(!el)return;
   el.addEventListener("change",()=>report&&renderTopology());
+});
+
+
+let networkAuditData=null;
+
+function auditScoreClass(v){
+  if(v==null)return "info";
+  if(v>=90)return "good";
+  if(v>=75)return "info";
+  if(v>=60)return "warn";
+  return "bad";
+}
+function auditStatusClass(status){
+  if(status==="PASS")return "ALREADY_OPTIMIZED";
+  if(status==="REVIEW")return "PROTECTED";
+  if(status==="WARNING")return "NEEDS_ATTENTION";
+  if(status==="CRITICAL")return "FAILED";
+  return "PROTECTED";
+}
+function auditLabel(category){
+  return String(category||"").replaceAll("_"," ").replace(/\b\w/g,m=>m.toUpperCase());
+}
+function auditFilteredFindings(){
+  if(!networkAuditData)return [];
+  const q=(document.getElementById("auditSearch")?.value||"").trim().toLowerCase();
+  const status=document.getElementById("auditStatusFilter")?.value||"";
+  const category=document.getElementById("auditCategoryFilter")?.value||"";
+  return (networkAuditData.findings||[]).filter(x=>{
+    if(status && x.status!==status)return false;
+    if(category && x.category!==category)return false;
+    if(q){
+      const vals=[x.title,x.detail,x.target,x.recommendation,x.category,x.status];
+      if(!vals.some(v=>String(v||"").toLowerCase().includes(q)))return false;
+    }
+    return true;
+  });
+}
+function renderAuditFindings(){
+  const box=document.getElementById("auditFindings");
+  if(!box||!networkAuditData)return;
+  const rows=auditFilteredFindings();
+  box.innerHTML=rows.length?rows.map(x=>
+    '<div class="audit-finding '+esc(String(x.status||"").toLowerCase())+'">'+
+      '<div class="audit-finding-head">'+
+        '<div><span class="status-tag '+auditStatusClass(x.status)+'">'+esc(x.status)+'</span> <span class="audit-category">'+esc(auditLabel(x.category))+'</span></div>'+
+        (x.target?'<span class="audit-target">'+esc(x.target)+'</span>':"")+
+      '</div>'+
+      '<h3>'+esc(x.title)+'</h3>'+
+      '<p>'+esc(x.detail)+'</p>'+
+      (x.recommendation?'<div class="audit-recommendation"><b>Recommended review</b><span>'+esc(x.recommendation)+'</span></div>':"")+
+    '</div>'
+  ).join(""):'<div class="empty">No audit findings match the selected filters.</div>';
+}
+function renderAuditInventory(inv){
+  inv=inv||{};
+  const networkBox=document.getElementById("auditNetworksInventory");
+  if(networkBox){
+    const rows=inv.networks||[];
+    networkBox.innerHTML=rows.length?rows.map(x=>
+      '<div class="audit-inventory-row"><b>'+esc(x.name||"Unnamed network")+'</b><span>VLAN '+esc(x.vlanId??"—")+(x.default?" · Default":"")+(x.enabled===false?" · Disabled":"")+'</span></div>'
+    ).join(""):'<div class="empty">No networks returned.</div>';
+  }
+  const wifiBox=document.getElementById("auditWifiInventory");
+  if(wifiBox){
+    const rows=inv.wifi||[];
+    wifiBox.innerHTML=rows.length?rows.map(x=>{
+      const sec=(x.securityConfiguration||{}).type||"Unknown";
+      const bands=(x.broadcastingFrequenciesGHz||[]).join(" / ")||"—";
+      return '<div class="audit-inventory-row"><b>'+esc(x.name||"Unnamed Wi-Fi")+'</b><span>'+esc(sec)+' · '+esc(bands)+' GHz · MLO '+(x.mloEnabled?"ON":"OFF")+'</span></div>';
+    }).join(""):'<div class="empty">No Wi-Fi broadcasts returned.</div>';
+  }
+  const firewallBox=document.getElementById("auditFirewallInventory");
+  if(firewallBox){
+    firewallBox.innerHTML=
+      '<div class="audit-inventory-row"><b>Firewall zones</b><span>'+esc((inv.firewallZones||[]).length)+'</span></div>'+
+      '<div class="audit-inventory-row"><b>Firewall policies</b><span>'+esc((inv.firewallPolicies||[]).length)+'</span></div>'+
+      '<div class="audit-inventory-row"><b>ACL rules</b><span>'+esc((inv.aclRules||[]).length)+'</span></div>';
+  }
+  const wanBox=document.getElementById("auditWanInventory");
+  if(wanBox){
+    wanBox.innerHTML=
+      '<div class="audit-inventory-row"><b>WAN interfaces</b><span>'+esc((inv.wans||[]).length)+'</span></div>'+
+      '<div class="audit-inventory-row"><b>DNS policies</b><span>'+esc((inv.dnsPolicies||[]).length)+'</span></div>';
+  }
+}
+function renderNetworkAudit(d){
+  networkAuditData=d;
+  const counts=d.counts||{};
+  const set=(id,val,cls)=>{
+    const el=document.getElementById(id);if(!el)return;
+    el.textContent=val;
+    if(cls!==undefined)el.className="big "+cls;
+  };
+  set("auditOverallScore",d.overallScore==null?"—":String(d.overallScore),auditScoreClass(d.overallScore));
+  set("auditCriticalCount",counts.CRITICAL??0,"bad");
+  set("auditWarningCount",counts.WARNING??0,"warn");
+  set("auditReviewCount",counts.REVIEW??0,"info");
+  set("auditPassCount",counts.PASS??0,"good");
+  const gen=document.getElementById("auditGeneratedAt");if(gen)gen.textContent=fmtShortDate(d.generatedAt);
+
+  const scores=document.getElementById("auditScoreCards");
+  if(scores){
+    scores.innerHTML=Object.entries(d.scores||{}).map(([k,v])=>
+      '<div class="summary-card"><h3>'+esc(auditLabel(k))+'</h3><div class="big '+auditScoreClass(v)+'">'+esc(v)+'</div></div>'
+    ).join("");
+  }
+
+  const cats=[...new Set((d.findings||[]).map(x=>x.category).filter(Boolean))].sort();
+  setClientSelectOptions("auditCategoryFilter",cats.map(auditLabel),"All categories");
+  const catSelect=document.getElementById("auditCategoryFilter");
+  if(catSelect){
+    [...catSelect.options].forEach(o=>{
+      const raw=cats.find(x=>auditLabel(x)===o.value);
+      if(raw)o.value=raw;
+    });
+  }
+
+  const notice=document.getElementById("auditNotice");
+  if(notice){
+    const critical=Number(counts.CRITICAL||0),warning=Number(counts.WARNING||0);
+    notice.innerHTML='<b class="'+(critical?"bad":warning?"warn":"good")+'">'+
+      (critical?critical+" critical issue"+(critical===1?"":"s")+" found":warning?warning+" warning"+(warning===1?"":"s")+" found":"No critical audit findings")+
+      '</b><br><span class="muted">Read-only audit · overall score '+esc(d.overallScore)+' · '+esc(counts.REVIEW||0)+' item'+(Number(counts.REVIEW||0)===1?"":"s")+' marked REVIEW for context-dependent confirmation.</span>';
+  }
+  renderAuditFindings();
+  renderAuditInventory(d.inventory);
+}
+async function loadNetworkAudit(){
+  const notice=document.getElementById("auditNotice");
+  if(notice)notice.innerHTML='<b class="info">Running read-only audit…</b><br><span class="muted">Reading current UniFi configuration and health data.</span>';
+  try{
+    const r=await fetch("/api/network-audit",{cache:"no-store"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Audit failed");
+    renderNetworkAudit(d);
+  }catch(e){
+    if(notice)notice.innerHTML='<b class="bad">Network audit failed</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }
+}
+["auditSearch","auditStatusFilter","auditCategoryFilter"].forEach(id=>{
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.addEventListener(id==="auditSearch"?"input":"change",renderAuditFindings);
 });
 
 
