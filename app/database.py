@@ -1142,6 +1142,23 @@ class Database:
             ORDER BY target_type ASC,target_name COLLATE NOCASE ASC
         """,(cutoff,)).fetchall()
 
+        bucket_expr="substr(ts,1,16)" if hours <= 24 else "substr(ts,1,13)"
+        ping_series=c.execute(f"""
+            SELECT
+                {bucket_expr} AS bucket,
+                SUM(sent) AS sent,
+                SUM(received) AS received,
+                CASE WHEN SUM(sent)>0
+                     THEN (1.0-(CAST(SUM(received) AS REAL)/SUM(sent)))*100.0
+                     ELSE NULL END AS packet_loss_pct,
+                AVG(avg_ms) AS avg_ms,
+                AVG(jitter_ms) AS jitter_ms
+            FROM wan_ping_samples
+            WHERE ts>=? AND target_type='INTERNET'
+            GROUP BY {bucket_expr}
+            ORDER BY bucket ASC
+        """,(cutoff,)).fetchall()
+
         latest_ping=c.execute("""
             SELECT p.*
             FROM wan_ping_samples p
@@ -1179,6 +1196,21 @@ class Database:
             WHERE ts>=?
             GROUP BY resolver_key
             ORDER BY resolver_name COLLATE NOCASE ASC
+        """,(cutoff,)).fetchall()
+
+        dns_series=c.execute(f"""
+            SELECT
+                {bucket_expr} AS bucket,
+                COUNT(*) AS samples,
+                SUM(success) AS successes,
+                CASE WHEN COUNT(*)>0
+                     THEN CAST(SUM(success) AS REAL)/COUNT(*)*100.0
+                     ELSE NULL END AS success_pct,
+                AVG(CASE WHEN success=1 THEN latency_ms END) AS avg_latency_ms
+            FROM wan_dns_samples
+            WHERE ts>=?
+            GROUP BY {bucket_expr}
+            ORDER BY bucket ASC
         """,(cutoff,)).fetchall()
 
         latest_dns=c.execute("""
@@ -1232,11 +1264,13 @@ class Database:
             "avgJitterMs":avg_jitter,
             "gateway":gateway_targets[0] if gateway_targets else None,
             "targets":targets,
+            "pingSeries":[dict(r) for r in ping_series],
             "latestPing":[dict(r) for r in latest_ping],
             "pingHistory":list(reversed([dict(r) for r in ping_history])),
             "dnsSuccessPct":dns_success_pct,
             "dnsAvgLatencyMs":dns_avg,
             "dnsResolvers":dns,
+            "dnsSeries":[dict(r) for r in dns_series],
             "latestDns":[dict(r) for r in latest_dns],
             "dnsHistory":list(reversed([dict(r) for r in dns_history])),
         }
