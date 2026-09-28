@@ -15,6 +15,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="speedtest") loadSpeedtest();
     if(btn.dataset.page==="channels") loadChannelPlan();
     if(btn.dataset.page==="system") loadSystem();
+    if(btn.dataset.page==="topology") renderTopology();
   });
 });
 
@@ -367,6 +368,178 @@ document.querySelectorAll("[data-client-sort]").forEach(th=>{
     if(report)renderClients();
   });
 });
+
+function topologyNodeTypeClass(type){
+  if(type==="GATEWAY")return "gateway";
+  if(type==="SWITCH")return "switch";
+  if(type==="ACCESS_POINT")return "ap";
+  return "device";
+}
+
+function topologyIcon(type){
+  if(type==="GATEWAY")return "GW";
+  if(type==="SWITCH")return "SW";
+  if(type==="ACCESS_POINT")return "AP";
+  return "DV";
+}
+
+function topologyClientIcon(type){
+  if(type==="WIRELESS")return "Wi";
+  if(type==="WIRED")return "Eth";
+  if(type==="VPN")return "VPN";
+  return "Cl";
+}
+
+function topologyClientMatches(c){
+  const type=document.getElementById("topologyClientType")?.value||"";
+  const vlan=document.getElementById("topologyVlanFilter")?.value||"";
+  const network=document.getElementById("topologyNetworkFilter")?.value||"";
+  if(type && String(c.type||"")!==type)return false;
+  if(vlan && String(c.vlanId??"Unknown")!==vlan)return false;
+  if(network && String(c.networkName||"Unknown")!==network)return false;
+  return true;
+}
+
+function topologyRadioSummary(device){
+  if(device.optimizerType!=="ACCESS_POINT")return "";
+  const radios=((device.interfaces||{}).radios)||[];
+  const parts=radios.map(r=>{
+    const f=r.frequencyGHz;
+    if(f==null)return null;
+    return f+" GHz ch "+(r.channel??"—")+" / "+(r.channelWidthMHz??"—")+" MHz";
+  }).filter(Boolean);
+  return parts.length?'<div class="topology-radio-line">'+parts.map(esc).join(" · ")+'</div>':"";
+}
+
+function topologyClientHtml(c,compact=false){
+  const name=c.name||c.macAddress||"Unnamed client";
+  const vlan=c.vlanId==null?"Unknown":c.vlanId;
+  const network=c.networkName||"Unknown";
+  const details=compact
+    ? esc(c.ipAddress||"—")+" · VLAN "+esc(vlan)
+    : esc(c.type||"CLIENT")+" · "+esc(c.ipAddress||"—")+" · VLAN "+esc(vlan)+" · "+esc(network)+(c.ssid?" · "+esc(c.ssid):"");
+  return '<div class="topology-client">'+
+    '<div class="topology-client-icon">'+esc(topologyClientIcon(c.type))+'</div>'+
+    '<div class="topology-client-copy"><b>'+esc(name)+'</b><span>'+details+'</span></div>'+
+  '</div>';
+}
+
+function topologyDeviceHtml(device,childrenMap,clientsMap,seen,depth=0){
+  if(!device||seen.has(device.id))return "";
+  seen.add(device.id);
+  const type=device.optimizerType||"DEVICE";
+  const children=childrenMap.get(device.id)||[];
+  const clients=(clientsMap.get(device.id)||[]).filter(topologyClientMatches);
+  const showClients=document.getElementById("topologyShowClients")?.checked!==false;
+  const compact=document.getElementById("topologyCompact")?.checked===true;
+  const state=device.state||"UNKNOWN";
+  const stateClass=state==="ONLINE"?"good":"bad";
+  const ip=device.ipAddress||"—";
+  const childHtml=children.map(x=>topologyDeviceHtml(x,childrenMap,clientsMap,seen,depth+1)).join("");
+  const clientHtml=showClients&&clients.length
+    ? '<div class="topology-clients">'+clients.map(x=>topologyClientHtml(x,compact)).join("")+'</div>'
+    : "";
+
+  return '<div class="topology-branch">'+
+    '<div class="topology-device '+topologyNodeTypeClass(type)+'">'+
+      '<div class="topology-device-icon">'+esc(topologyIcon(type))+'</div>'+
+      '<div class="topology-device-copy">'+
+        '<div class="topology-device-head"><b>'+esc(device.name||device.model||"UniFi device")+'</b><span class="'+stateClass+'">'+esc(state)+'</span></div>'+
+        '<span>'+esc(type.replace("_"," "))+' · '+esc(device.model||"—")+' · '+esc(ip)+'</span>'+
+        (device.uplinkName?'<span class="muted">Uplink: '+esc(device.uplinkName)+'</span>':"")+
+        topologyRadioSummary(device)+
+      '</div>'+
+      '<div class="topology-counts">'+
+        (type==="ACCESS_POINT"?'<span>'+esc(device.clientCount||0)+' clients</span>':"")+
+        (children.length?'<span>'+esc(children.length)+' downstream</span>':"")+
+      '</div>'+
+    '</div>'+
+    (childHtml||clientHtml?'<div class="topology-children">'+childHtml+clientHtml+'</div>':"")+
+  '</div>';
+}
+
+function renderTopology(){
+  if(!report)return;
+  const tree=document.getElementById("topologyTree");
+  if(!tree)return;
+
+  const devices=report.devices||[];
+  const clients=report.clients||[];
+  const deviceMap=new Map(devices.map(d=>[d.id,d]));
+  const nameMap=new Map(devices.map(d=>[String(d.name||""),d]));
+  const childrenMap=new Map();
+  const clientsMap=new Map();
+  const unresolvedDevices=[];
+
+  devices.forEach(d=>{
+    const uplinkId=(d.uplink||{}).deviceId;
+    let parent=uplinkId?deviceMap.get(uplinkId):null;
+    if(!parent && d.uplinkName)parent=nameMap.get(String(d.uplinkName));
+    if(parent && parent.id!==d.id){
+      if(!childrenMap.has(parent.id))childrenMap.set(parent.id,[]);
+      childrenMap.get(parent.id).push(d);
+    }else if(d.optimizerType!=="GATEWAY"){
+      unresolvedDevices.push(d);
+    }
+  });
+
+  clients.forEach(c=>{
+    if(!c.uplinkDeviceId)return;
+    if(!clientsMap.has(c.uplinkDeviceId))clientsMap.set(c.uplinkDeviceId,[]);
+    clientsMap.get(c.uplinkDeviceId).push(c);
+  });
+
+  for(const arr of childrenMap.values()){
+    arr.sort((a,b)=>{
+      const order={SWITCH:0,ACCESS_POINT:1,GATEWAY:2};
+      const ao=order[a.optimizerType]??9,bo=order[b.optimizerType]??9;
+      return ao-bo||String(a.name||"").localeCompare(String(b.name||""));
+    });
+  }
+  for(const arr of clientsMap.values()){
+    arr.sort((a,b)=>String(a.name||a.ipAddress||"").localeCompare(String(b.name||b.ipAddress||""),undefined,{numeric:true,sensitivity:"base"}));
+  }
+
+  setClientSelectOptions("topologyVlanFilter",clients.map(c=>c.vlanId==null?"Unknown":c.vlanId),"All VLANs");
+  setClientSelectOptions("topologyNetworkFilter",clients.map(c=>c.networkName||"Unknown"),"All networks");
+
+  const gateways=devices.filter(d=>d.optimizerType==="GATEWAY");
+  const seen=new Set();
+  let html='<div class="topology-internet"><div class="topology-internet-node"><b>Internet</b><span>WAN</span></div><div class="topology-internet-line"></div></div>';
+  if(gateways.length){
+    html+=gateways.map(g=>topologyDeviceHtml(g,childrenMap,clientsMap,seen,0)).join("");
+  }else{
+    html+='<div class="empty">No gateway was returned by the current UniFi device inventory.</div>';
+  }
+
+  const remaining=devices.filter(d=>!seen.has(d.id));
+  if(remaining.length){
+    html+='<div class="topology-unresolved"><h3>Unresolved / standalone</h3><div class="muted">UniFi did not report a usable uplink relationship for these devices.</div>'+
+      remaining.map(d=>topologyDeviceHtml(d,new Map(),clientsMap,seen,0)).join("")+
+    '</div>';
+  }
+  tree.innerHTML=html;
+
+  const set=(id,val)=>{const el=document.getElementById(id);if(el)el.textContent=val};
+  set("topologyDeviceCount",devices.length);
+  set("topologySwitchCount",devices.filter(d=>d.optimizerType==="SWITCH").length);
+  set("topologyApCount",devices.filter(d=>d.optimizerType==="ACCESS_POINT").length);
+  set("topologyClientCount",clients.filter(topologyClientMatches).length);
+
+  const notice=document.getElementById("topologyNotice");
+  if(notice){
+    const unresolved=remaining.length;
+    notice.innerHTML='<b class="'+(unresolved?"warn":"good")+'">'+(unresolved?"Topology mostly resolved":"Topology resolved from UniFi uplinks")+'</b><br>'+
+      '<span class="muted">'+esc(devices.length)+' UniFi devices · '+esc(clients.length)+' connected clients'+(unresolved?' · '+esc(unresolved)+' device'+(unresolved===1?"":"s")+' without a resolved parent':"")+'.</span>';
+  }
+}
+
+["topologyShowClients","topologyClientType","topologyVlanFilter","topologyNetworkFilter","topologyCompact"].forEach(id=>{
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.addEventListener("change",()=>report&&renderTopology());
+});
+
 
 function renderSwitches(){
   const box=document.getElementById("switchContainer");box.innerHTML="";
