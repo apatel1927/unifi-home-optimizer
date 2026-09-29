@@ -24,6 +24,7 @@
     <button class="nav active" data-page="overview">Overview</button>
     <button class="nav" data-page="wifi">Wi-Fi</button>
     <button class="nav" data-page="channels">Channel Planner</button>
+    <button class="nav" data-page="rfenvironment">RF Environment</button>
     <button class="nav" data-page="internet">Internet</button>
     <button class="nav" data-page="wanquality">WAN Quality</button>
     <button class="nav" data-page="traffic">Traffic</button>
@@ -407,6 +408,65 @@
       </div>
     </section>
 
+    <section id="rfenvironment" class="page">
+      <div class="section-head">
+        <div>
+          <h2>RF Environment</h2>
+          <span class="muted">Passive read-only RF telemetry from UniFi classic data: channel utilization, self airtime, external busy time, noise, retries and neighboring BSS observations when exposed.</span>
+        </div>
+        <div class="traffic-range-controls">
+          <select id="rfEnvironmentRange" class="search">
+            <option value="1">Last hour</option>
+            <option value="24" selected>Last 24 hours</option>
+            <option value="168">Last 7 days</option>
+            <option value="720">Last 30 days</option>
+          </select>
+          <button id="rfSampleNowBtn" class="secondary">Refresh passive RF</button>
+        </div>
+      </div>
+
+      <div id="rfEnvironmentNotice" class="panel notice">
+        Learning passive RF conditions…
+      </div>
+
+      <div class="summary-grid rf-summary-grid">
+        <div class="summary-card"><h3>Radios observed</h3><div id="rfRadioCount" class="big">—</div></div>
+        <div class="summary-card"><h3>Neighbor BSS</h3><div id="rfNeighborCount" class="big">—</div><div class="muted">Current read-only observations</div></div>
+        <div class="summary-card"><h3>Highest utilization</h3><div id="rfHighestUtil" class="big">—</div><div id="rfHighestUtilDetail" class="muted">—</div></div>
+        <div class="summary-card"><h3>Highest external busy</h3><div id="rfHighestExternal" class="big">—</div><div id="rfHighestExternalDetail" class="muted">—</div></div>
+        <div class="summary-card"><h3>Lowest noise floor</h3><div id="rfNoiseFloor" class="big">—</div><div class="muted">More negative is quieter</div></div>
+        <div class="summary-card"><h3>Last sample</h3><div id="rfLastSample" class="big compact-big">—</div></div>
+      </div>
+
+      <div class="section-head"><h2>Current radio environment</h2></div>
+      <div class="panel table-wrap">
+        <table>
+          <thead>
+            <tr><th>AP</th><th>Band</th><th>Channel / width</th><th>Utilization</th><th>Self RX</th><th>Self TX</th><th>External busy</th><th>Noise</th><th>TX power</th><th>Retries</th><th>Neighbors</th></tr>
+          </thead>
+          <tbody id="rfRadioTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section-head">
+        <div><h2>Neighboring BSS observations</h2><span class="muted">Shown only when the controller exposes read-only neighboring/rogue AP observations.</span></div>
+      </div>
+      <div class="panel table-wrap">
+        <table>
+          <thead><tr><th>SSID</th><th>BSSID</th><th>Band</th><th>Channel</th><th>RSSI</th><th>Noise</th><th>Reporting AP</th></tr></thead>
+          <tbody id="rfNeighborTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section-head"><h2>RF collection diagnostics</h2></div>
+      <div id="rfDiagnostics" class="panel system-list"></div>
+
+      <div class="panel notice">
+        <b>Active spectrum scan safety</b><br>
+        <span class="muted">Active off-channel scanning is not run automatically. The supplied official Network API documentation does not expose a documented RF scan command, and an undocumented scan can interrupt clients. The app will keep active scanning disabled until the exact controller/AP command is separately verified.</span>
+      </div>
+    </section>
+
     <section id="channels" class="page">
       <div class="section-head">
         <div>
@@ -765,6 +825,17 @@
       <div class="panel ai-output-panel">
         <pre id="aiOutput">No AI analysis has been run yet.</pre>
       </div>
+      <div class="section-head">
+        <div>
+          <h2>AI Approval Queue</h2>
+          <span class="muted">AI can propose only whitelisted actions. Nothing executes until you explicitly approve it.</span>
+        </div>
+        <button id="refreshAiProposalsBtn" class="secondary">Generate proposals</button>
+      </div>
+      <div id="aiProposalNotice" class="panel notice">
+        No proposal generation has been requested yet.
+      </div>
+      <div id="aiProposalQueue" class="proposal-grid"></div>
 
       <div class="section-head"><h2>Automation safety policy</h2></div>
       <div class="panel notice">
@@ -872,7 +943,7 @@
 
       <div class="section-head"><h2>How this score works</h2></div>
       <div class="panel notice">
-        A 100 Mbps link is not automatically considered bad. The audit treats likely IoT/camera-class endpoints as expected low-speed links, while a UniFi infrastructure device at 100 Mbps, repeated link flaps, PoE faults or large error/drop counts receive stronger attention.
+        A 100 Mbps link is not automatically considered bad. Use <b>Set expected speed</b> on a port after you confirm the endpoint capability. The app remembers that expectation and will stop penalizing a matching link, but still warns if the link later falls below the expected speed, flaps, accumulates new errors/drops, or develops a PoE fault.
       </div>
     </section>
 
