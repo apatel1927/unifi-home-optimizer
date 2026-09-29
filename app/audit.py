@@ -50,7 +50,7 @@ def _score(findings, category=None):
     return max(0,min(100,score))
 
 
-def build_network_audit(snapshot, api, wired_audit=None):
+def build_network_audit(snapshot, api, wired_audit=None, qos_state=None):
     findings=[]
     site=snapshot.get("site") or {}
     site_id=site.get("id")
@@ -65,7 +65,14 @@ def build_network_audit(snapshot, api, wired_audit=None):
     acl_rules=api.acl_rules(site_id) if site_id else []
     dns_policies=api.dns_policies(site_id) if site_id else []
     wans=api.wan_interfaces(site_id) if site_id else []
-    qos_rules=api.qos_rules(site_id) if site_id else None
+    if qos_state is None:
+        qos_rules=api.qos_rules(site_id) if site_id else None
+        qos_state={
+            "available":qos_rules is not None,
+            "source":"INTEGRATION" if qos_rules is not None else None,
+            "rules":qos_rules or [],
+        }
+    qos_rules=(qos_state or {}).get("rules") or []
 
     # Device health / software / basic stability.
     offline=[d for d in devices if d.get("state")!="ONLINE"]
@@ -317,22 +324,22 @@ def build_network_audit(snapshot, api, wired_audit=None):
              "Confirm the disabled state is intentional.")
 
     # DNS / WAN inventories.
-    if qos_rules is not None:
+    if (qos_state or {}).get("available"):
         enabled_qos=[x for x in qos_rules if x.get("enabled") is not False]
         disabled_qos=[x for x in qos_rules if x.get("enabled") is False]
+        source=(qos_state or {}).get("source") or "controller API"
         if enabled_qos:
             names=[str(x.get("name") or x.get("description") or x.get("id") or "Unnamed QoS rule") for x in enabled_qos]
             preview=", ".join(names[:4]) + ("…" if len(names)>4 else "")
             _add(findings,"WARNING","WAN","Gateway QoS can reduce multi-gigabit throughput",
                  f"{len(enabled_qos)} enabled gateway QoS rule(s) detected: {preview}. UniFi documents that enabling gateway QoS disables hardware offloading and can reduce throughput for traffic above 1 Gbps.",
                  "Gateway QoS",
-                 "For multi-gigabit WANs, keep gateway QoS disabled unless the prioritization/limit is required. If disabling a rule does not immediately restore throughput, perform a controlled gateway reboot and retest.")
+                 "For multi-gigabit WANs, keep gateway QoS disabled unless the prioritization/limit is required. If disabling a rule does not immediately restore throughput, perform a controlled gateway reboot and retest.",
+                 {"source":source})
         else:
             _add(findings,"PASS","WAN","No enabled gateway QoS rules",
-                 f"{len(disabled_qos)} configured QoS rule(s) are disabled; no enabled gateway QoS rule was returned by the Integration API.")
-    else:
-        # Do not penalize controllers that do not expose the QoS endpoint.
-        pass
+                 f"{len(disabled_qos)} configured QoS rule(s) are disabled; no enabled gateway QoS rule was detected.",
+                 evidence={"source":source})
 
     if wans:
         _add(findings,"PASS","WAN","WAN interface inventory available",
@@ -372,8 +379,9 @@ def build_network_audit(snapshot, api, wired_audit=None):
             "aclRules":acl_rules,
             "dnsPolicies":dns_policies,
             "wans":wans,
-            "qosRules":qos_rules or [],
-            "qosRulesAvailable":qos_rules is not None,
+            "qosRules":qos_rules,
+            "qosRulesAvailable":bool((qos_state or {}).get("available")),
+            "qosRulesSource":(qos_state or {}).get("source"),
             "networks":networks,
             "wifi":wifi,
         },
