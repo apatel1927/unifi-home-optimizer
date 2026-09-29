@@ -1,12 +1,43 @@
 let previousAlertState={internet:null,offlineAps:new Set(),testResults:new Map()};
 let report=null;
 
+function closeMobileNav(){
+  const sidebar=document.getElementById("primarySidebar");
+  const backdrop=document.getElementById("mobileNavBackdrop");
+  const toggle=document.getElementById("mobileNavToggle");
+  sidebar?.classList.remove("mobile-open");
+  document.body.classList.remove("mobile-nav-open");
+  if(backdrop)backdrop.hidden=true;
+  if(toggle)toggle.setAttribute("aria-expanded","false");
+}
+function openMobileNav(){
+  const sidebar=document.getElementById("primarySidebar");
+  const backdrop=document.getElementById("mobileNavBackdrop");
+  const toggle=document.getElementById("mobileNavToggle");
+  sidebar?.classList.add("mobile-open");
+  document.body.classList.add("mobile-nav-open");
+  if(backdrop)backdrop.hidden=false;
+  if(toggle)toggle.setAttribute("aria-expanded","true");
+}
+function toggleMobileNav(){
+  const sidebar=document.getElementById("primarySidebar");
+  if(sidebar?.classList.contains("mobile-open"))closeMobileNav();
+  else openMobileNav();
+}
+document.getElementById("mobileNavToggle")?.addEventListener("click",toggleMobileNav);
+document.getElementById("mobileNavBackdrop")?.addEventListener("click",closeMobileNav);
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeMobileNav();});
+
 document.querySelectorAll(".nav").forEach(btn=>{
   btn.addEventListener("click",()=>{
     document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
     document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById(btn.dataset.page).classList.add("active");
+    const mobileLabel=document.getElementById("mobileNavLabel");
+    if(mobileLabel)mobileLabel.textContent=btn.textContent.trim();
+    closeMobileNav();
+    window.scrollTo({top:0,behavior:"instant"});
     if(btn.dataset.page==="history") loadHistory();
     if(btn.dataset.page==="roaming") loadRoaming();
     if(btn.dataset.page==="internet") loadInternet();
@@ -1891,6 +1922,47 @@ function rfPct(v){
 function rfDbm(v){
   return v==null?"—":Number(v).toFixed(0)+" dBm";
 }
+function rfNeighborSummary(neighbors){
+  const dedup=new Map();
+  for(const n of neighbors||[]){
+    const band=n.band==null?"?":String(n.band);
+    const channel=n.channel==null?"?":String(n.channel);
+    const identity=(n.bssid||((n.ssid||"unknown")+"@"+channel+"@"+band)).toLowerCase();
+    const key=band+"|"+channel+"|"+identity;
+    const existing=dedup.get(key);
+    const rssi=Number.isFinite(Number(n.rssi))?Number(n.rssi):null;
+    if(!existing || (rssi!=null && (existing.rssi==null || rssi>existing.rssi))){
+      dedup.set(key,{...n,rssi});
+    }
+  }
+
+  const groups=new Map();
+  for(const n of dedup.values()){
+    const band=n.band==null?"?":String(n.band);
+    const channel=n.channel==null?"?":String(n.channel);
+    const key=band+"|"+channel;
+    if(!groups.has(key))groups.set(key,{band,channel,count:0,strongest:null,strongestSsid:null});
+    const g=groups.get(key);
+    g.count++;
+    if(n.rssi!=null && (g.strongest==null || n.rssi>g.strongest)){
+      g.strongest=n.rssi;
+      g.strongestSsid=n.ssid||"Hidden / unknown";
+    }
+  }
+
+  const classify=g=>{
+    if((g.strongest!=null&&g.strongest>=-65)||g.count>=15)return {label:"HIGH",cls:"high"};
+    if((g.strongest!=null&&g.strongest>=-75)||g.count>=8)return {label:"MODERATE",cls:"moderate"};
+    return {label:"LOW",cls:"low"};
+  };
+
+  const rows=[...groups.values()].sort((a,b)=>{
+    const bandOrder=v=>v==="2.4"?0:v==="5"?1:v==="6"?2:9;
+    return bandOrder(a.band)-bandOrder(b.band) || Number(a.channel||999)-Number(b.channel||999);
+  });
+  return {rows,uniqueCount:dedup.size,classify};
+}
+
 function renderRfEnvironment(d){
   rfEnvironmentData=d;
   const rows=(d.liveRadios&&d.liveRadios.length?d.liveRadios:d.latest)||[];
@@ -1956,10 +2028,29 @@ function renderRfEnvironment(d){
     }).join(""):'<tr><td colspan="11"><div class="empty">No passive radio statistics have been exposed yet. Use Refresh passive RF and inspect diagnostics.</div></td></tr>';
   }
 
+  const neighborSummary=rfNeighborSummary(neighbors);
+  const summaryTable=document.getElementById("rfNeighborChannelSummary");
+  if(summaryTable){
+    summaryTable.innerHTML=neighborSummary.rows.length?neighborSummary.rows.map(g=>{
+      const pressure=neighborSummary.classify(g);
+      const strongest=g.strongest==null?"—":rfDbm(g.strongest)+" · "+(g.strongestSsid||"");
+      return '<tr>'+
+        '<td>'+esc(g.band==="?"?"Unknown":g.band+" GHz")+'</td>'+
+        '<td><b>'+esc(g.channel)+'</b></td>'+
+        '<td>'+esc(g.count)+'</td>'+
+        '<td>'+esc(strongest)+'</td>'+
+        '<td><span class="rf-pressure '+pressure.cls+'"><span class="rf-pressure-dot"></span>'+pressure.label+'</span></td>'+
+      '</tr>';
+    }).join(""):'<tr><td colspan="5"><div class="empty">No neighboring BSS observations are available yet.</div></td></tr>';
+  }
+
+  const rawCount=document.getElementById("rfNeighborRawCount");
+  if(rawCount)rawCount.textContent="("+neighborSummary.uniqueCount+" unique / "+neighbors.length+" observations)";
+
   const nt=document.getElementById("rfNeighborTable");
   if(nt){
     const sorted=[...neighbors].sort((a,b)=>Number(b.rssi??-999)-Number(a.rssi??-999));
-    nt.innerHTML=sorted.length?sorted.slice(0,200).map(x=>
+    nt.innerHTML=sorted.length?sorted.slice(0,250).map(x=>
       '<tr><td><b>'+esc(x.ssid||"Hidden / unknown")+'</b></td><td class="client-ip">'+esc(x.bssid||"—")+'</td><td>'+esc(x.band==null?"—":x.band+" GHz")+'</td><td>'+esc(x.channel??"—")+'</td><td>'+esc(rfDbm(x.rssi))+'</td><td>'+esc(rfDbm(x.noiseDbm))+'</td><td>'+esc(x.sourceApMac||"Site-wide")+'</td></tr>'
     ).join(""):'<tr><td colspan="7"><div class="empty">The controller did not return neighboring BSS observations from the read-only classic endpoint.</div></td></tr>';
   }
