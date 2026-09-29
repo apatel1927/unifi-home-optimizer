@@ -57,6 +57,7 @@ def _neighbor_row(n):
         "radio":_first(n,("radio","radio_name","band")),
         "lastSeen":_first(n,("last_seen","lastSeen","seen")),
         "ageSeconds":_num(_first(n,("age","age_seconds"))),
+        "sourceApMac":str(_first(n,("ap_mac","source_ap_mac","reporting_ap_mac","adopted_by")) or "").lower(),
     }
 
 
@@ -110,9 +111,10 @@ def parse_rf_environment(classic_devices, rogue_aps=None):
             clients=_num(_first(st,("num_sta","numStations","client_count","clientCount")))
             retries=_num(_first(st,("tx_retries_pct","txRetriesPct","retry_pct","retryPct")))
 
-            matching=[n for n in neighbors if n.get("band")==band]
+            ap_mac=str(d.get("mac") or "").lower()
+            matching=[n for n in neighbors if n.get("band")==band and (not n.get("sourceApMac") or n.get("sourceApMac")==ap_mac)]
             rows.append({
-                "apMac":str(d.get("mac") or "").lower(),
+                "apMac":ap_mac,
                 "apName":d.get("name") or d.get("model") or d.get("mac"),
                 "model":d.get("model"),
                 "radioName":key,
@@ -157,7 +159,7 @@ def parse_rf_environment(classic_devices, rogue_aps=None):
                 "txPowerDbm":_num(_first(st,("tx_power","txPower","tx_power_dbm"))),
                 "clientCount":_num(_first(st,("num_sta","numStations","client_count","clientCount"))),
                 "txRetriesPct":_num(_first(st,("tx_retries_pct","txRetriesPct","retry_pct","retryPct"))),
-                "neighborCount":len([n for n in neighbors if n.get("band")==band]),
+                "neighborCount":len([n for n in neighbors if n.get("band")==band and (not n.get("sourceApMac") or n.get("sourceApMac")==str(d.get("mac") or "").lower())]),
             })
 
         diagnostics.append({
