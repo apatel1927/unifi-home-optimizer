@@ -276,14 +276,62 @@ def _classic_bytes_rate_bps(item, direction):
     n=_num(raw)
     return n*8.0 if n is not None else None
 
+def _station_dpi_counter_map():
+    output={}
+    if not private_api.configured:
+        return output
+    try:
+        tables=private_api.station_dpi()
+    except Exception:
+        return output
+    for table in tables:
+        if not isinstance(table,dict):
+            continue
+        mac=_norm_mac(table.get("mac") or table.get("sta") or table.get("station_mac"))
+        if not mac:
+            continue
+        rx=_classic_counter(table,"rx")
+        tx=_classic_counter(table,"tx")
+        if rx is None or tx is None:
+            items=table.get("by_app") or table.get("by_cat") or []
+            sum_rx=0
+            sum_tx=0
+            found=False
+            for item in items:
+                if not isinstance(item,dict):
+                    continue
+                irx=_int_counter(item.get("rx_bytes"))
+                itx=_int_counter(item.get("tx_bytes"))
+                if irx is not None:
+                    sum_rx+=irx
+                    found=True
+                if itx is not None:
+                    sum_tx+=itx
+                    found=True
+            if found:
+                if rx is None:
+                    rx=sum_rx
+                if tx is None:
+                    tx=sum_tx
+        output[mac]={"rxBytes":rx,"txBytes":tx}
+    return output
+
 def _traffic_rows_from_report(data):
     enriched={_norm_mac(x.get("macAddress")):x for x in (data.get("clients") or []) if x.get("macAddress")}
+    station_dpi=_station_dpi_counter_map()
     rows=[]
     for raw in _classic_clients_cached():
         mac=_norm_mac(raw.get("mac"))
         if not mac:
             continue
         client=enriched.get(mac) or {}
+        dpi_counter=station_dpi.get(mac) or {}
+        rx_counter=_classic_counter(raw,"rx")
+        tx_counter=_classic_counter(raw,"tx")
+        if rx_counter is None:
+            rx_counter=dpi_counter.get("rxBytes")
+        if tx_counter is None:
+            tx_counter=dpi_counter.get("txBytes")
         rows.append({
             "mac":mac,
             "name":client.get("name") or raw.get("name") or raw.get("hostname") or mac,
@@ -291,8 +339,8 @@ def _traffic_rows_from_report(data):
             "vlanId":client.get("vlanId") if client.get("vlanId") is not None else raw.get("vlan"),
             "networkName":client.get("networkName") or raw.get("network") or raw.get("network_name") or "Unknown",
             "uplinkName":client.get("uplinkDeviceName") or "Unknown",
-            "rxBytes":_classic_counter(raw,"rx"),
-            "txBytes":_classic_counter(raw,"tx"),
+            "rxBytes":rx_counter,
+            "txBytes":tx_counter,
             "rxRateBps":_classic_bytes_rate_bps(raw,"rx"),
             "txRateBps":_classic_bytes_rate_bps(raw,"tx"),
         })
@@ -420,12 +468,15 @@ def _traffic_diagnostics():
             coverage[field]={"present":present,"nonzero":nonzero}
 
     dpi_tables=[]
+    station_dpi_tables=[]
     dpi_error=None
     try:
         dpi_tables=private_api.site_dpi() if private_api.configured else []
+        station_dpi_tables=private_api.station_dpi() if private_api.configured else []
     except Exception as e:
         dpi_error=str(e)
     dpi_keys=sorted({str(k) for row in dpi_tables[:20] for k in row.keys()})
+    station_dpi_keys=sorted({str(k) for row in station_dpi_tables[:20] for k in row.keys()})
     by_app=sum(len((row.get("by_app") or [])) for row in dpi_tables if isinstance(row,dict))
     by_cat=sum(len((row.get("by_cat") or [])) for row in dpi_tables if isinstance(row,dict))
 
@@ -438,6 +489,8 @@ def _traffic_diagnostics():
         "counterCoverage":coverage,
         "dpiTableCount":len(dpi_tables),
         "dpiKeys":dpi_keys,
+        "stationDpiCount":len(station_dpi_tables),
+        "stationDpiKeys":station_dpi_keys,
         "dpiByAppCount":by_app,
         "dpiByCategoryCount":by_cat,
         "dpiError":dpi_error,
