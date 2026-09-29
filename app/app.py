@@ -599,6 +599,7 @@ def _wired_audit_for_snapshot(snapshot, include_events=True):
     events=db.wired_port_event_summary(24) if include_events else {}
     recent=db.wired_recent_events(24,200) if include_events else []
     counters=db.wired_port_counter_summary()
+    expectations=db.wired_expectations()
     return build_wired_audit(
         snapshot,
         classic_devices=classic_devices,
@@ -606,7 +607,63 @@ def _wired_audit_for_snapshot(snapshot, include_events=True):
         event_summary=events,
         recent_events=recent,
         counter_summary=counters,
+        expectations=expectations,
     )
+
+
+def _collect_rf_environment(snapshot=None):
+    global rf_environment_live,rf_environment_last_error
+    if not private_api.configured:
+        rf_environment_last_error="Private/classic UniFi credentials are not configured"
+        rf_environment_live={"radios":[],"neighbors":[],"diagnostics":[]}
+        return rf_environment_live
+
+    try:
+        devices=_classic_devices_cached()
+        rogue=[]
+        try:
+            rogue=private_api.rogue_aps()
+        except Exception as e:
+            rf_environment_last_error="Neighbor AP lookup: "+str(e)
+        parsed=parse_rf_environment(devices,rogue)
+
+        if snapshot:
+            official_devices=snapshot.get("devices") or []
+            if not official_devices and snapshot.get("accessPoints"):
+                official_devices=snapshot.get("accessPoints") or []
+            official_by_mac={
+                _norm_mac(d.get("macAddress") or d.get("mac")):d
+                for d in official_devices
+                if d.get("macAddress") or d.get("mac")
+            }
+            for row in parsed.get("radios") or []:
+                ap=official_by_mac.get(_norm_mac(row.get("apMac"))) or {}
+                stat_radios=(((ap.get("statistics") or {}).get("interfaces") or {}).get("radios") or [])
+                stat=next((r for r in stat_radios if float(r.get("frequencyGHz") or 0)==float(row.get("band") or 0)),{})
+                if row.get("txRetriesPct") is None and stat.get("txRetriesPct") is not None:
+                    row["txRetriesPct"]=stat.get("txRetriesPct")
+                if row.get("clientCount") is None and ap.get("clientCount") is not None:
+                    row["clientCount"]=ap.get("clientCount")
+
+        rf_environment_live=parsed
+        if parsed.get("radios"):
+            rf_environment_last_error=None
+        elif rf_environment_last_error is None:
+            rf_environment_last_error="Classic API returned no radio_table/radio_table_stats telemetry"
+        return parsed
+    except Exception as e:
+        rf_environment_last_error=str(e)
+        return rf_environment_live
+
+def _sample_rf_environment(snapshot=None):
+    global rf_environment_last_sample_monotonic,rf_environment_last_sample_at
+    parsed=_collect_rf_environment(snapshot)
+    rows=parsed.get("radios") or []
+    if rows:
+        db.record_rf_environment(rows)
+        rf_environment_last_sample_monotonic=time.monotonic()
+        rf_environment_last_sample_at=datetime.now(timezone.utc).isoformat()
+    return parsed
 
 def _build_support_context():
     snap=build_snapshot(api)
@@ -627,6 +684,10 @@ def _build_support_context():
     speed=db.speedtest_summary(30)
     speed["history"]=db.speedtest_history(30,200)
     wan=db.wan_quality_summary(24)
+    rf_summary=db.rf_environment_summary(24)
+    rf_summary["neighbors"]=(rf_environment_live or {}).get("neighbors") or []
+    rf_summary["lastSampleAt"]=rf_environment_last_sample_at
+    rf_summary["lastError"]=rf_environment_last_error
 
     return {
         "generatedAt":datetime.now(timezone.utc).isoformat(),
@@ -636,6 +697,7 @@ def _build_support_context():
         "networkAudit":audit,
         "wiredAudit":wired,
         "wanQuality24h":wan,
+        "rfEnvironment24h":rf_summary,
         "traffic24h":{
             "usage":traffic,
             "dpi":traffic_dpi,
@@ -1383,7 +1445,7 @@ def probe_internet():
         return False, None
 
 def monitor_loop():
-    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic,wan_last_sample_monotonic
+    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic,wan_last_sample_monotonic,rf_environment_last_sample_monotonic
     elapsed=0
     while True:
         try:
@@ -1400,6 +1462,8 @@ def monitor_loop():
                     print("Wired port monitor error:",e,flush=True)
                 if (time.monotonic()-traffic_last_sample_monotonic) >= traffic_sample_interval_seconds:
                     _sample_traffic(data)
+                if (time.monotonic()-rf_environment_last_sample_monotonic) >= rf_environment_sample_seconds:
+                    _sample_rf_environment(data)
                 if (time.monotonic()-wan_last_sample_monotonic) >= wan_quality_sample_seconds:
                     _sample_wan_quality()
                 analysis=data.get("analysis") or {}
