@@ -20,7 +20,8 @@ from .optimizer import build_snapshot, analyze, auto_optimize, wifi_status, buil
 from .audit import build_network_audit
 from .wired_audit import build_wired_audit
 from .export_bundle import build_zip_bytes, build_json_bytes, compact_support_summary, sanitize
-from .ai_advisor import analyze_with_openai
+from .ai_advisor import analyze_with_openai, generate_ai_proposals
+from .rf_environment import parse_rf_environment
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
@@ -76,6 +77,11 @@ ai_running = False
 ai_starting = False
 ai_started_at = None
 ai_last_error = None
+rf_environment_sample_seconds = 300
+rf_environment_last_sample_monotonic = 0.0
+rf_environment_last_sample_at = None
+rf_environment_last_error = None
+rf_environment_live = {"radios":[],"neighbors":[],"diagnostics":[]}
 
 def _wan_targets():
     gateway=urlparse(UNIFI_URL).hostname
