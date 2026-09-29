@@ -24,7 +24,7 @@ from .ai_advisor import analyze_with_openai
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.20.4"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.21.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -252,6 +252,18 @@ def _int_counter(value):
     n=_num(value)
     return int(n) if n is not None and n >= 0 else None
 
+def _classic_counter(item, direction):
+    keys={
+        "rx":("rx_bytes","rxBytes","rx_byte","rx_total_bytes","bytes_rx"),
+        "tx":("tx_bytes","txBytes","tx_byte","tx_total_bytes","bytes_tx"),
+    }.get(direction,())
+    for key in keys:
+        if key in item:
+            value=_int_counter(item.get(key))
+            if value is not None:
+                return value
+    return None
+
 def _classic_bytes_rate_bps(item, direction):
     # UniFi classic station payload commonly exposes rx_bytes-r / tx_bytes-r
     # as byte rates. Keep this separate from rx_rate/tx_rate, which can be
@@ -279,8 +291,8 @@ def _traffic_rows_from_report(data):
             "vlanId":client.get("vlanId") if client.get("vlanId") is not None else raw.get("vlan"),
             "networkName":client.get("networkName") or raw.get("network") or raw.get("network_name") or "Unknown",
             "uplinkName":client.get("uplinkDeviceName") or "Unknown",
-            "rxBytes":_int_counter(raw.get("rx_bytes")),
-            "txBytes":_int_counter(raw.get("tx_bytes")),
+            "rxBytes":_classic_counter(raw,"rx"),
+            "txBytes":_classic_counter(raw,"tx"),
             "rxRateBps":_classic_bytes_rate_bps(raw,"rx"),
             "txRateBps":_classic_bytes_rate_bps(raw,"tx"),
         })
@@ -301,8 +313,8 @@ def _traffic_live_rows_from_summary(summary):
             "vlanId":meta.get("vlan_id") if meta.get("vlan_id") is not None else raw.get("vlan"),
             "networkName":meta.get("network_name") or raw.get("network") or raw.get("network_name") or "Unknown",
             "uplinkName":meta.get("uplink_name") or "Unknown",
-            "rxBytes":_int_counter(raw.get("rx_bytes")),
-            "txBytes":_int_counter(raw.get("tx_bytes")),
+            "rxBytes":_classic_counter(raw,"rx"),
+            "txBytes":_classic_counter(raw,"tx"),
             "rxRateBps":_classic_bytes_rate_bps(raw,"rx"),
             "txRateBps":_classic_bytes_rate_bps(raw,"tx"),
         })
@@ -390,6 +402,51 @@ def _site_dpi_rows():
     except Exception as e:
         print("Classic DPI error:",e,flush=True)
     return output
+
+def _traffic_diagnostics():
+    stations=_classic_clients_cached() if private_api.configured else []
+    station_keys=sorted({str(k) for row in stations[:50] for k in row.keys()})
+    counter_fields=[
+        "rx_bytes","tx_bytes","rxBytes","txBytes","rx_byte","tx_byte",
+        "rx_total_bytes","tx_total_bytes","bytes_rx","bytes_tx",
+        "rx_bytes-r","tx_bytes-r","rx_bytes_r","tx_bytes_r",
+        "rxBytesRate","txBytesRate"
+    ]
+    coverage={}
+    for field in counter_fields:
+        present=sum(1 for row in stations if field in row and row.get(field) not in (None,""))
+        nonzero=sum(1 for row in stations if _num(row.get(field)) not in (None,0))
+        if present:
+            coverage[field]={"present":present,"nonzero":nonzero}
+
+    dpi_tables=[]
+    dpi_error=None
+    try:
+        dpi_tables=private_api.site_dpi() if private_api.configured else []
+    except Exception as e:
+        dpi_error=str(e)
+    dpi_keys=sorted({str(k) for row in dpi_tables[:20] for k in row.keys()})
+    by_app=sum(len((row.get("by_app") or [])) for row in dpi_tables if isinstance(row,dict))
+    by_cat=sum(len((row.get("by_cat") or [])) for row in dpi_tables if isinstance(row,dict))
+
+    summary=db.traffic_summary(24)
+    totals=summary.get("totals") or {}
+    return {
+        "privateConfigured":private_api.configured,
+        "stationCount":len(stations),
+        "stationKeys":station_keys,
+        "counterCoverage":coverage,
+        "dpiTableCount":len(dpi_tables),
+        "dpiKeys":dpi_keys,
+        "dpiByAppCount":by_app,
+        "dpiByCategoryCount":by_cat,
+        "dpiError":dpi_error,
+        "databaseClientCount":totals.get("client_count",0),
+        "databaseRxBytes":totals.get("rx_bytes",0),
+        "databaseTxBytes":totals.get("tx_bytes",0),
+        "lastSampleAt":traffic_last_sample_at,
+        "lastError":traffic_last_error,
+    }
 
 def _sample_traffic(data):
     global traffic_last_sample_monotonic,traffic_last_sample_at,traffic_last_error
@@ -1554,6 +1611,23 @@ def wan_quality():
         "targets":summary.get("targets") or [],
     })
 
+@app.route("/api/traffic/diagnostics")
+def traffic_diagnostics():
+    return jsonify({"ok":True,**_traffic_diagnostics()})
+
+@app.route("/api/traffic/sample",methods=["POST"])
+def traffic_sample_now():
+    if not private_api.configured:
+        return jsonify({"ok":False,"error":"Private UniFi API credentials are not configured"}),400
+    try:
+        data=report_data()
+        if not data:
+            return jsonify({"ok":False,"error":"Unable to retrieve UniFi report"}),500
+        _sample_traffic(data)
+        return jsonify({"ok":True,"diagnostics":_traffic_diagnostics()})
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),500
+
 @app.route("/api/traffic")
 def traffic_data():
     try:
@@ -1641,6 +1715,61 @@ def optimization_tests():
         return jsonify({"ok":True,"item":item})
     snap=build_snapshot(api)
     return jsonify({"ok":True,"items":evaluate_optimization_tests(snap)})
+
+@app.route("/api/optimization-tests/<int:test_id>/retest",methods=["POST"])
+def optimization_test_retest(test_id):
+    previous=db.get_optimization_test(test_id)
+    if not previous:
+        return jsonify({"ok":False,"error":"Test not found"}),404
+    if previous.get("status")!="CANCELLED":
+        return jsonify({"ok":False,"error":"Only cancelled tests can be restarted with this action"}),400
+
+    active={"PROPOSED","MONITORING","ROLLBACK_REQUIRED","ROLLBACK_MONITORING"}
+    for item in db.list_optimization_tests(100):
+        if item.get("id")==test_id:
+            continue
+        if item.get("status") in active and item.get("ap_id")==previous.get("ap_id") and float(item.get("band"))==float(previous.get("band")):
+            return jsonify({"ok":False,"error":"Another active RF test already exists for this AP and band"}),409
+
+    snap=build_snapshot(api)
+    live=_current_radio_config(snap,previous.get("ap_id"),float(previous.get("band"))) if snap else None
+    if not live:
+        return jsonify({"ok":False,"error":"Unable to read the current radio configuration"}),400
+
+    proposed_channel=previous.get("proposed_channel")
+    proposed_width=previous.get("proposed_width_mhz")
+    if live.get("channel")==proposed_channel and live.get("widthMHz")==proposed_width:
+        return jsonify({
+            "ok":False,
+            "needsRestore":True,
+            "error":"The AP is still on the cancelled test setting. Restore the original setting before starting a clean retest.",
+            "current":{"channel":live.get("channel"),"widthMHz":live.get("widthMHz")},
+            "original":{"channel":previous.get("original_channel"),"widthMHz":previous.get("original_width_mhz")}
+        }),409
+
+    now=datetime.now(timezone.utc)
+    baseline_stats=db.ap_window_stats(
+        previous.get("ap_id"),float(previous.get("band")),
+        (now-timedelta(minutes=60)).isoformat(),
+        now.isoformat()
+    )
+    trends=db.ap_retry_trends(15)
+    baseline=_trend_retry_for_band(trends,previous.get("ap_id"),float(previous.get("band")))
+    baseline60=baseline_stats.get("retryAvg")
+
+    item=db.create_optimization_test(
+        previous.get("ap_id"),previous.get("ap_name"),float(previous.get("band")),
+        proposed_channel,proposed_width,
+        live.get("channel"),live.get("widthMHz"),
+        "Retest of cancelled test #"+str(test_id)+": "+str(previous.get("description") or ""),
+        baseline,
+        "15-min average" if baseline is not None else "unavailable",
+        baseline60,
+        baseline_stats.get("clientAvg"),
+        baseline_stats.get("sampleCount")
+    )
+    db.log("RF_TEST_RETEST",previous.get("ap_name"),str(previous.get("band"))+" GHz retest created from cancelled test #"+str(test_id),"PROPOSED")
+    return jsonify({"ok":True,"item":item})
 
 @app.route("/api/optimization-tests/recover",methods=["POST"])
 def optimization_test_recover():
