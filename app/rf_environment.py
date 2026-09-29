@@ -7,13 +7,13 @@ def _num(value):
         return None
 
 
-def _dbm(value):
-    """Normalize UniFi RF dBm fields without pretending the vendor payload is fully validated.
+def _normalize_signed_magnitude(value):
+    """Create a provisional signed observation without assigning physical units.
 
-    Some U7 classic/rogue payloads expose signal magnitudes as positive integers
-    (for example 59 for what is conventionally -59 dBm). Convert only plausible
-    positive magnitudes and mark that normalization so callers can keep the value
-    observational until controller semantics are independently verified.
+    Some U7 classic/rogue payloads expose positive magnitudes where a related
+    field may normally be signed. Convert only plausible magnitudes and mark the
+    conversion. Callers must keep the result diagnostic until the controller
+    semantics are independently verified.
     """
     n=_num(value)
     if n is None:
@@ -88,10 +88,10 @@ def _neighbor_row(n):
             source_raw=value
             break
 
-    provisional,normalized=_dbm(source_raw)
+    provisional,normalized=_normalize_signed_magnitude(source_raw)
     raw_noise=n.get("noise") if "noise" in n else None
     raw_noise_dbm=n.get("noise_dbm") if "noise_dbm" in n else None
-    noise,noise_normalized=_dbm(raw_noise if _num(raw_noise) is not None else raw_noise_dbm)
+    noise,noise_normalized=_normalize_signed_magnitude(raw_noise if _num(raw_noise) is not None else raw_noise_dbm)
 
     return {
         "ssid":_first(n,("essid","ssid","name")),
