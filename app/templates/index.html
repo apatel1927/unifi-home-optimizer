@@ -17,10 +17,15 @@
     <span id="lastChecked" class="muted">Checking…</span>
     <div id="controllerPill" class="pill good">Controller connected</div>
   </div>
+  <button id="mobileNavToggle" class="mobile-nav-toggle" aria-expanded="false" aria-controls="primarySidebar">
+    <span class="mobile-nav-icon">☰</span>
+    <span id="mobileNavLabel">Overview</span>
+  </button>
 </header>
+<div id="mobileNavBackdrop" class="mobile-nav-backdrop" hidden></div>
 
 <div class="shell">
-  <aside class="sidebar">
+  <aside id="primarySidebar" class="sidebar">
     <button class="nav active" data-page="overview">Overview</button>
     <button class="nav" data-page="wifi">Wi-Fi</button>
     <button class="nav" data-page="channels">Channel Planner</button>
@@ -449,14 +454,27 @@
       </div>
 
       <div class="section-head">
-        <div><h2>Neighboring BSS observations</h2><span class="muted">Shown only when the controller exposes read-only neighboring/rogue AP observations.</span></div>
+        <div>
+          <h2>Neighbor channel summary</h2>
+          <span class="muted">Unique neighboring BSS observations grouped by band/channel. Strongest RSSI and BSS counts are more useful than a long duplicate list.</span>
+        </div>
       </div>
-      <div class="panel table-wrap">
+      <div class="panel table-wrap rf-channel-summary-panel">
         <table>
-          <thead><tr><th>SSID</th><th>BSSID</th><th>Band</th><th>Channel</th><th>RSSI</th><th>Noise</th><th>Reporting AP</th></tr></thead>
-          <tbody id="rfNeighborTable"></tbody>
+          <thead><tr><th>Band</th><th>Channel</th><th>Unique BSS</th><th>Strongest neighbor</th><th>Observed BSS pressure</th></tr></thead>
+          <tbody id="rfNeighborChannelSummary"></tbody>
         </table>
       </div>
+
+      <details id="rfNeighborRawDetails" class="panel rf-raw-neighbors">
+        <summary>Show raw neighboring BSS observations <span id="rfNeighborRawCount" class="muted"></span></summary>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>SSID</th><th>BSSID</th><th>Band</th><th>Channel</th><th>RSSI</th><th>Noise</th><th>Reporting AP</th></tr></thead>
+            <tbody id="rfNeighborTable"></tbody>
+          </table>
+        </div>
+      </details>
 
       <div class="section-head"><h2>RF collection diagnostics</h2></div>
       <div id="rfDiagnostics" class="panel system-list"></div>
