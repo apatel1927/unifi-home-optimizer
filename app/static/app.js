@@ -1036,6 +1036,104 @@ async function runAiAnalysisNow(){
   }
 }
 
+function proposalStatusClass(status){
+  if(status==="EXECUTED")return "SUCCESS";
+  if(status==="ACKNOWLEDGED")return "ALREADY_OPTIMIZED";
+  if(status==="FAILED")return "FAILED";
+  if(status==="REJECTED")return "SKIPPED";
+  return "PROTECTED";
+}
+
+function proposalActionLabel(action){
+  if(action==="RF_ABA_TEST")return "RF A/B/A test";
+  if(action==="AUTO_OPTIMIZE_RUN")return "Auto Optimize";
+  if(action==="REVIEW_SETTING")return "Review only";
+  return action||"Proposal";
+}
+
+function renderAiProposals(items){
+  const box=document.getElementById("aiProposalQueue");
+  if(!box)return;
+  if(!items||!items.length){
+    box.innerHTML='<div class="empty">No AI proposals are queued. Generate proposals after a successful AI analysis when you want a fresh approval list.</div>';
+    return;
+  }
+  box.innerHTML=items.map(p=>{
+    const pending=p.status==="PENDING";
+    const params=p.params||{};
+    const paramLine=p.action_type==="RF_ABA_TEST"
+      ?[params.apName,params.band!=null?params.band+" GHz":null,
+        (params.proposedChannel!=null&&params.proposedWidthMHz!=null)?params.proposedChannel+" / "+params.proposedWidthMHz+" MHz":null].filter(Boolean).join(" · ")
+      :"";
+    const approveLabel=p.action_type==="REVIEW_SETTING"?"Acknowledge":"Approve";
+    const controls=pending
+      ?'<div class="proposal-controls"><button class="ai-proposal-approve" data-id="'+p.id+'">'+approveLabel+'</button><button class="secondary ai-proposal-reject" data-id="'+p.id+'">Reject</button></div>'
+      :'';
+    return '<div class="panel proposal-card">'+
+      '<div class="proposal-head"><div><span class="eyebrow">'+esc(proposalActionLabel(p.action_type))+'</span><h3>'+esc(p.title||"Proposal")+'</h3></div><span class="status-tag '+proposalStatusClass(p.status)+'">'+esc(p.status)+'</span></div>'+
+      (paramLine?'<div class="proposal-param">'+esc(paramLine)+'</div>':'')+
+      '<p>'+esc(p.reason||"")+'</p>'+
+      '<div class="proposal-meta"><div><span>Risk</span><b>'+esc(p.risk||"REVIEW")+'</b></div><div><span>Rollback / safety</span><b>'+esc(p.rollback||"No automatic change")+'</b></div></div>'+
+      (p.execution_result?'<div class="muted proposal-result">'+esc(p.execution_result)+'</div>':'')+
+      controls+
+    '</div>';
+  }).join("");
+}
+
+async function loadAiProposals(){
+  try{
+    const r=await fetch("/api/ai/proposals",{cache:"no-store"});
+    const d=await r.json();
+    if(d.ok)renderAiProposals(d.items||[]);
+  }catch(e){
+    const notice=document.getElementById("aiProposalNotice");
+    if(notice)notice.innerHTML='<b class="warn">Unable to load approval queue</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }
+}
+
+async function refreshAiProposals(){
+  const btn=document.getElementById("refreshAiProposalsBtn");
+  const notice=document.getElementById("aiProposalNotice");
+  if(btn){btn.disabled=true;btn.textContent="Generating…";}
+  if(notice)notice.innerHTML='<b class="info">Generating a constrained approval queue…</b><br><span class="muted">Only whitelisted execution paths can become executable proposals.</span>';
+  try{
+    const r=await fetch("/api/ai/proposals/refresh",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Unable to generate proposals");
+    if(notice)notice.innerHTML='<b class="good">Approval queue refreshed</b><br><span class="muted">'+esc(d.generated||0)+' validated proposal'+(Number(d.generated||0)===1?"":"s")+' generated. Nothing has been changed.</span>';
+    renderAiProposals(d.items||[]);
+  }catch(e){
+    if(notice)notice.innerHTML='<b class="warn">Proposal generation did not run</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Generate proposals";}
+  }
+}
+
+async function actOnAiProposal(id,action){
+  const verb=action==="approve"?"approve":"reject";
+  if(action==="approve" && !confirm("Approve this proposal? Executable proposals can start only the whitelisted deterministic action shown on the card."))return;
+  const r=await fetch("/api/ai/proposals/"+id+"/"+verb,{method:"POST"});
+  const d=await r.json();
+  if(!d.ok){
+    alert(d.error||"Unable to update proposal.");
+  }
+  await loadAiProposals();
+  if(action==="approve"){
+    await loadOptimizationTests();
+    await loadChannelPlan();
+    await loadWiredAudit();
+  }
+}
+
+document.getElementById("refreshAiProposalsBtn")?.addEventListener("click",refreshAiProposals);
+document.addEventListener("click",e=>{
+  const approve=e.target.closest(".ai-proposal-approve");
+  if(approve){actOnAiProposal(Number(approve.dataset.id),"approve");return;}
+  const reject=e.target.closest(".ai-proposal-reject");
+  if(reject)actOnAiProposal(Number(reject.dataset.id),"reject");
+});
+
+
 async function copySupportSummary(){
   const status=document.getElementById("exportStatus");
   if(status)status.textContent="Building compact support summary…";
