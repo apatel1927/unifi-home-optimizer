@@ -700,8 +700,12 @@ function renderAuditInventory(inv){
   }
   const wanBox=document.getElementById("auditWanInventory");
   if(wanBox){
+    const qosAvailable=inv.qosRulesAvailable!==false;
+    const qosRows=inv.qosRules||[];
+    const qosEnabled=qosRows.filter(x=>x.enabled!==false).length;
     wanBox.innerHTML=
       '<div class="audit-inventory-row"><b>WAN interfaces</b><span>'+esc((inv.wans||[]).length)+'</span></div>'+
+      '<div class="audit-inventory-row"><b>Gateway QoS</b><span>'+(qosAvailable?esc(qosEnabled+" enabled / "+qosRows.length+" configured"):"Unavailable")+'</span></div>'+
       '<div class="audit-inventory-row"><b>DNS policies</b><span>'+esc((inv.dnsPolicies||[]).length)+'</span></div>';
   }
 }
@@ -1736,6 +1740,7 @@ function renderSpeedtest(d){
   const dur=document.getElementById("speedtestLastDuration");
   const next=document.getElementById("speedtestNextRun");
   const notice=document.getElementById("speedtestNotice");
+  const qosWarning=document.getElementById("gatewayQosWarning");
   const toggle=document.getElementById("speedtestAutoToggle");
   const interval=document.getElementById("speedtestInterval");
 
@@ -1768,6 +1773,21 @@ function renderSpeedtest(d){
     selectionStatus.textContent=(d.engine==="OOKLA_OFFICIAL"?"Official Ookla CLI":"Speedtest engine")+
       " · "+(d.preferredServerId?"locked to server ID "+d.preferredServerId:"automatic nearby selection")+
       (d.engineAvailable===false?" · CLI unavailable":"");
+  }
+
+  if(qosWarning){
+    const qos=d.gatewayQos||{};
+    if(qos.performanceWarning){
+      const names=(qos.enabledRules||[]).map(x=>x.name).filter(Boolean);
+      qosWarning.style.display="block";
+      qosWarning.innerHTML='<b class="warn">Gateway QoS may reduce multi-gigabit throughput</b><br>'+
+        '<span class="muted">'+esc(qos.enabledCount||names.length)+' enabled gateway QoS rule'+(Number(qos.enabledCount||names.length)===1?"":"s")+
+        (names.length?': '+esc(names.join(", ")):"")+
+        '. UniFi documents that gateway QoS disables hardware offloading and can reduce throughput above 1 Gbps. For multi-gig WAN testing, compare results with gateway QoS disabled.</span>';
+    }else{
+      qosWarning.style.display="none";
+      qosWarning.innerHTML="";
+    }
   }
 
   if(notice){
