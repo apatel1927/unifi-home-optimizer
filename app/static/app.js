@@ -2033,6 +2033,12 @@ function renderChannelPlan(plan){
       const actions=(x.actions||[]).map(a=>'<li>'+esc(a)+'</li>').join("");
       const rec=(x.recommendedChannel==null?"—":x.recommendedChannel)+" / "+(x.recommendedWidthMHz==null?"—":x.recommendedWidthMHz+" MHz");
       const current=(x.channel==null?"—":x.channel)+" / "+(x.widthMHz==null?"—":x.widthMHz+" MHz");
+      const rfEvidence=[
+        x.rfUtilizationPct!=null?"Util "+Number(x.rfUtilizationPct).toFixed(1)+"%":null,
+        x.rfExternalBusyPct!=null?"External "+Number(x.rfExternalBusyPct).toFixed(1)+"%":null,
+        x.rfNoiseDbm!=null?"Noise "+Number(x.rfNoiseDbm).toFixed(0)+" dBm":null,
+        x.rfNeighborCount!=null?"Neighbors "+x.rfNeighborCount:null
+      ].filter(Boolean);
       box.insertAdjacentHTML("beforeend",
         '<div class="channel-card">'+
           '<div class="channel-head"><div><h3>'+esc(x.apName)+'</h3><span class="muted">'+esc(x.band)+' GHz · '+esc(x.model)+'</span></div>'+
@@ -2043,6 +2049,7 @@ function renderChannelPlan(plan){
             '<div><span>Block</span><b>'+esc(x.channelBlock||"—")+'</b></div>'+
             '<div><span>Retries</span><b class="'+retryClass(x.retryPct)+'">'+esc(retry)+'</b><small>'+esc(x.retryBasis||"")+'</small></div>'+
           '</div>'+
+          (rfEvidence.length?'<div class="channel-rf-evidence"><span>Passive RF</span><b>'+esc(rfEvidence.join(" · "))+'</b></div>':'')+
           '<ul class="channel-actions">'+actions+'</ul>'+
           (x.testableChange
             ?'<div class="channel-test-action"><button class="start-test-btn" data-test-index="'+items.indexOf(x)+'">Create '+esc(x.band)+' GHz A/B/A test</button></div>'
