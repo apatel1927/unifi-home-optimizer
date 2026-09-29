@@ -907,24 +907,90 @@ class Database:
             ORDER BY id DESC
             LIMIT ?
         """,(cutoff,limit)).fetchall()
-        avg_rows=c.execute("""
-            SELECT ap_mac,MAX(ap_name) AS ap_name,band,
-                   AVG(channel_utilization_pct) AS avg_utilization_pct,
-                   AVG(external_busy_pct) AS avg_external_busy_pct,
-                   AVG(noise_dbm) AS avg_noise_dbm,
-                   AVG(tx_retries_pct) AS avg_tx_retries_pct,
-                   MAX(neighbor_count) AS max_neighbor_count,
-                   COUNT(*) AS sample_count
+        samples=c.execute("""
+            SELECT ap_mac,ap_name,band,channel_utilization_pct,external_busy_pct,
+                   noise_dbm,tx_retries_pct,client_count,neighbor_count
             FROM rf_environment_samples
             WHERE ts>=?
-            GROUP BY ap_mac,band
-            ORDER BY ap_name COLLATE NOCASE,band
+            ORDER BY id ASC
         """,(cutoff,)).fetchall()
         c.close()
+
+        def _values(rows,key):
+            out=[]
+            for row in rows:
+                value=row.get(key)
+                if value is None:
+                    continue
+                try:
+                    out.append(float(value))
+                except Exception:
+                    pass
+            return out
+
+        def _avg(values):
+            return (sum(values)/len(values)) if values else None
+
+        def _percentile(values,p):
+            if not values:
+                return None
+            values=sorted(values)
+            pos=(len(values)-1)*float(p)
+            low=int(pos)
+            high=min(low+1,len(values)-1)
+            if high==low:
+                return values[low]
+            fraction=pos-low
+            return values[low]+((values[high]-values[low])*fraction)
+
+        grouped={}
+        for raw in samples:
+            row=dict(raw)
+            key=(row.get("ap_mac"),row.get("band"))
+            grouped.setdefault(key,[]).append(row)
+
+        historical=[]
+        for (_,band),rows in grouped.items():
+            util=_values(rows,"channel_utilization_pct")
+            external=_values(rows,"external_busy_pct")
+            noise=_values(rows,"noise_dbm")
+            retries=_values(rows,"tx_retries_pct")
+            clients=_values(rows,"client_count")
+            neighbors=_values(rows,"neighbor_count")
+            historical.append({
+                "apMac":rows[-1].get("ap_mac"),
+                "apName":next((r.get("ap_name") for r in reversed(rows) if r.get("ap_name")),None),
+                "band":band,
+                "sampleCount":len(rows),
+                "avgUtilizationPct":_avg(util),
+                "medianUtilizationPct":_percentile(util,0.50),
+                "p95UtilizationPct":_percentile(util,0.95),
+                "maxUtilizationPct":max(util) if util else None,
+                "avgExternalBusyPct":_avg(external),
+                "avgNoiseDbm":_avg(noise),
+                "avgRetriesPct":_avg(retries),
+                "maxClientCount":int(max(clients)) if clients else None,
+                "maxNeighborCount":int(max(neighbors)) if neighbors else None,
+            })
+        historical.sort(key=lambda r:((r.get("apName") or "").lower(),float(r.get("band") or 0)))
+
+        averages=[{
+            "ap_mac":r.get("apMac"),
+            "ap_name":r.get("apName"),
+            "band":r.get("band"),
+            "avg_utilization_pct":r.get("avgUtilizationPct"),
+            "avg_external_busy_pct":r.get("avgExternalBusyPct"),
+            "avg_noise_dbm":r.get("avgNoiseDbm"),
+            "avg_tx_retries_pct":r.get("avgRetriesPct"),
+            "max_neighbor_count":r.get("maxNeighborCount"),
+            "sample_count":r.get("sampleCount"),
+        } for r in historical]
+
         return {
             "hours":hours,
             "latest":[dict(r) for r in latest],
-            "averages":[dict(r) for r in avg_rows],
+            "averages":averages,
+            "historical":historical,
             "history":list(reversed([dict(r) for r in history])),
         }
 

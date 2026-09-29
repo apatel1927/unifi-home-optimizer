@@ -437,8 +437,8 @@
       <div class="summary-grid rf-summary-grid">
         <div class="summary-card"><h3>Radios observed</h3><div id="rfRadioCount" class="big">—</div></div>
         <div class="summary-card"><h3>Neighbor BSS</h3><div id="rfNeighborCount" class="big">—</div><div class="muted">Current read-only observations</div></div>
-        <div class="summary-card"><h3>Highest utilization</h3><div id="rfHighestUtil" class="big">—</div><div id="rfHighestUtilDetail" class="muted">—</div></div>
-        <div class="summary-card"><h3>Highest external busy</h3><div id="rfHighestExternal" class="big">—</div><div id="rfHighestExternalDetail" class="muted">—</div></div>
+        <div class="summary-card"><h3>Highest current utilization</h3><div id="rfHighestUtil" class="big">—</div><div id="rfHighestUtilDetail" class="muted">Latest passive sample</div></div>
+        <div class="summary-card"><h3>Highest current external busy</h3><div id="rfHighestExternal" class="big">—</div><div id="rfHighestExternalDetail" class="muted">Latest passive sample</div></div>
         <div class="summary-card"><h3>Lowest noise floor</h3><div id="rfNoiseFloor" class="big">—</div><div class="muted">More negative is quieter</div></div>
         <div class="summary-card"><h3>Last sample</h3><div id="rfLastSample" class="big compact-big">—</div></div>
       </div>
@@ -455,8 +455,32 @@
 
       <div class="section-head">
         <div>
+          <h2>Historical RF summary</h2>
+          <span id="rfHistoricalRangeLabel" class="muted">Selected-range stored-sample summary</span>
+        </div>
+      </div>
+      <div class="summary-grid rf-summary-grid">
+        <div class="summary-card"><h3>Stored samples</h3><div id="rfHistoricalSamples" class="big">—</div><div class="muted">Across all radios in the selected range</div></div>
+        <div class="summary-card"><h3>Highest average utilization</h3><div id="rfHistoricalAvg" class="big">—</div><div id="rfHistoricalAvgDetail" class="muted">—</div></div>
+        <div class="summary-card"><h3>Highest p95 utilization</h3><div id="rfHistoricalP95" class="big">—</div><div id="rfHistoricalP95Detail" class="muted">—</div></div>
+      </div>
+      <div class="panel notice">
+        <b>Historical vs current:</b>
+        <span class="muted"> The cards and table below use stored passive RF samples from the selected time range. The current radio table above remains the latest live snapshot, so a single spike is not presented as a 24-hour condition.</span>
+      </div>
+      <div class="panel table-wrap">
+        <table>
+          <thead>
+            <tr><th>AP</th><th>Band</th><th>Samples</th><th>Average util</th><th>Median util</th><th>P95 util</th><th>Peak util</th><th>Avg external</th><th>Avg retries</th><th>Max clients</th></tr>
+          </thead>
+          <tbody id="rfHistoricalTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section-head">
+        <div>
           <h2>Neighbor channel summary</h2>
-          <span class="muted">Unique neighboring BSS observations grouped by band/channel. Strongest RSSI and BSS counts are more useful than a long duplicate list.</span>
+          <span class="muted">Unique neighboring BSS observations grouped by band/channel. BSS pressure remains count-based while U7 neighbor-RSSI field semantics are being validated; normalized RSSI is shown for observation only.</span>
         </div>
       </div>
       <div class="panel table-wrap rf-channel-summary-panel">
@@ -495,7 +519,7 @@
       </div>
 
       <div class="panel notice">
-        Safe advisory mode: the planner now uses passive classic RF telemetry when your controller exposes it, alongside retry history and own-AP overlap. Active/off-channel scanning remains disabled until its controller-specific command is separately verified. Radio changes still use the gated A/B/A workflow rather than silent tuning.
+        Safe advisory mode: the planner uses passive current-channel RF telemetry when your controller exposes it, alongside retry history and own-AP overlap. Neighbor RSSI is not used to select a channel until its controller field semantics are independently validated. Active/off-channel scanning remains disabled until its controller-specific command is separately verified. Radio changes still use the gated A/B/A workflow rather than silent tuning.
       </div>
 
       <div class="summary-grid" id="channelSummaryCards"></div>
