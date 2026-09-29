@@ -163,6 +163,9 @@ class PrivateUniFiAPI:
     def station_dpi(self):
         return self._items(self.classic("GET","/stat/stadpi"))
 
+    def rogue_aps(self):
+        return self._items(self.classic("GET","/stat/rogueap"))
+
     def discover_radios(self):
         devices=self.devices()
         aps=[]
