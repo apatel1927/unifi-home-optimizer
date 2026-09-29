@@ -14,11 +14,12 @@ document.querySelectorAll(".nav").forEach(btn=>{
     if(btn.dataset.page==="traffic") loadTraffic();
     if(btn.dataset.page==="speedtest") loadSpeedtest();
     if(btn.dataset.page==="channels") loadChannelPlan();
+    if(btn.dataset.page==="rfenvironment") loadRfEnvironment();
     if(btn.dataset.page==="system") loadSystem();
     if(btn.dataset.page==="topology") loadTopology();
     if(btn.dataset.page==="switches") loadWiredAudit();
     if(btn.dataset.page==="audit") loadNetworkAudit();
-    if(btn.dataset.page==="exportai") loadAiStatus();
+    if(btn.dataset.page==="exportai"){loadAiStatus();loadAiProposals();}
   });
 });
 
@@ -1723,6 +1724,132 @@ document.getElementById("speedtestInterval")?.addEventListener("change",async e=
 setInterval(()=>{
   if(document.querySelector("#speedtest.page.active"))loadSpeedtest();
 },10000);
+
+
+let rfEnvironmentData=null;
+
+function rfPct(v){
+  return v==null?"—":Number(v).toFixed(1)+"%";
+}
+function rfDbm(v){
+  return v==null?"—":Number(v).toFixed(0)+" dBm";
+}
+function renderRfEnvironment(d){
+  rfEnvironmentData=d;
+  const rows=(d.liveRadios&&d.liveRadios.length?d.liveRadios:d.latest)||[];
+  const neighbors=d.neighbors||[];
+  const set=(id,val)=>{const el=document.getElementById(id);if(el)el.textContent=val};
+
+  set("rfRadioCount",rows.length);
+  set("rfNeighborCount",neighbors.length);
+  const utilRows=rows.filter(x=>x.channelUtilizationPct!=null||x.channel_utilization_pct!=null);
+  const extRows=rows.filter(x=>x.externalBusyPct!=null||x.external_busy_pct!=null);
+  const noiseRows=rows.filter(x=>x.noiseDbm!=null||x.noise_dbm!=null);
+  const utilValue=x=>Number(x.channelUtilizationPct??x.channel_utilization_pct);
+  const extValue=x=>Number(x.externalBusyPct??x.external_busy_pct);
+  const noiseValue=x=>Number(x.noiseDbm??x.noise_dbm);
+  const hiUtil=utilRows.length?[...utilRows].sort((a,b)=>utilValue(b)-utilValue(a))[0]:null;
+  const hiExt=extRows.length?[...extRows].sort((a,b)=>extValue(b)-extValue(a))[0]:null;
+  const quiet=noiseRows.length?[...noiseRows].sort((a,b)=>noiseValue(a)-noiseValue(b))[0]:null;
+  set("rfHighestUtil",hiUtil?rfPct(utilValue(hiUtil)):"—");
+  set("rfHighestUtilDetail",hiUtil?(hiUtil.apName||hiUtil.ap_name||"AP")+" · "+(hiUtil.band||"—")+" GHz":"Not exposed");
+  set("rfHighestExternal",hiExt?rfPct(extValue(hiExt)):"—");
+  set("rfHighestExternalDetail",hiExt?(hiExt.apName||hiExt.ap_name||"AP")+" · "+(hiExt.band||"—")+" GHz":"Not exposed");
+  set("rfNoiseFloor",quiet?rfDbm(noiseValue(quiet)):"—");
+  set("rfLastSample",d.lastSampleAt?fmtShortDate(d.lastSampleAt):"Learning…");
+
+  const notice=document.getElementById("rfEnvironmentNotice");
+  if(notice){
+    if(!d.privateConfigured){
+      notice.innerHTML='<b class="warn">Private/classic telemetry is not configured</b><br><span class="muted">RF environment data needs the local read-only classic API connection.</span>';
+    }else if(d.lastError&&!rows.length){
+      notice.innerHTML='<b class="warn">RF telemetry is not available yet</b><br><span class="muted">'+esc(d.lastError)+'</span>';
+    }else{
+      notice.innerHTML='<b class="good">Passive RF monitoring active</b><br><span class="muted">Read-only sample every '+Math.round(Number(d.sampleIntervalSeconds||300)/60)+' minutes. Neighbor observations are shown only when the controller exposes them. No active/off-channel scan is being triggered.</span>';
+    }
+  }
+
+  const table=document.getElementById("rfRadioTable");
+  if(table){
+    table.innerHTML=rows.length?rows.map(x=>{
+      const name=x.apName||x.ap_name||"—";
+      const channel=x.channel??"—";
+      const width=x.widthMHz??x.width_mhz;
+      const util=x.channelUtilizationPct??x.channel_utilization_pct;
+      const selfRx=x.selfRxPct??x.self_rx_pct;
+      const selfTx=x.selfTxPct??x.self_tx_pct;
+      const external=x.externalBusyPct??x.external_busy_pct;
+      const noise=x.noiseDbm??x.noise_dbm;
+      const txp=x.txPowerDbm??x.tx_power_dbm;
+      const retry=x.txRetriesPct??x.tx_retries_pct;
+      const neighbor=x.neighborCount??x.neighbor_count;
+      return '<tr>'+
+        '<td><b>'+esc(name)+'</b><div class="muted">'+esc(x.radioName||x.radio_name||"")+'</div></td>'+
+        '<td>'+esc(x.band)+' GHz</td>'+
+        '<td>'+esc(channel)+(width!=null?' / '+esc(width)+' MHz':'')+'</td>'+
+        '<td>'+esc(rfPct(util))+'</td>'+
+        '<td>'+esc(rfPct(selfRx))+'</td>'+
+        '<td>'+esc(rfPct(selfTx))+'</td>'+
+        '<td>'+esc(rfPct(external))+'</td>'+
+        '<td>'+esc(rfDbm(noise))+'</td>'+
+        '<td>'+esc(txp==null?"—":Number(txp).toFixed(0)+" dBm")+'</td>'+
+        '<td class="'+retryClass(retry)+'">'+esc(retry==null?"—":Number(retry).toFixed(1)+"%")+'</td>'+
+        '<td>'+esc(neighbor??"—")+'</td>'+
+      '</tr>';
+    }).join(""):'<tr><td colspan="11"><div class="empty">No passive radio statistics have been exposed yet. Use Refresh passive RF and inspect diagnostics.</div></td></tr>';
+  }
+
+  const nt=document.getElementById("rfNeighborTable");
+  if(nt){
+    const sorted=[...neighbors].sort((a,b)=>Number(b.rssi??-999)-Number(a.rssi??-999));
+    nt.innerHTML=sorted.length?sorted.slice(0,200).map(x=>
+      '<tr><td><b>'+esc(x.ssid||"Hidden / unknown")+'</b></td><td class="client-ip">'+esc(x.bssid||"—")+'</td><td>'+esc(x.band==null?"—":x.band+" GHz")+'</td><td>'+esc(x.channel??"—")+'</td><td>'+esc(rfDbm(x.rssi))+'</td><td>'+esc(rfDbm(x.noiseDbm))+'</td><td>'+esc(x.sourceApMac||"Site-wide")+'</td></tr>'
+    ).join(""):'<tr><td colspan="7"><div class="empty">The controller did not return neighboring BSS observations from the read-only classic endpoint.</div></td></tr>';
+  }
+
+  const diag=document.getElementById("rfDiagnostics");
+  if(diag){
+    const ds=d.diagnostics||[];
+    diag.innerHTML=ds.length?ds.map(x=>
+      '<div><span>'+esc(x.apName||"AP")+'</span><b class="diagnostic-keys">radio stats: '+esc((x.radioStatKeys||[]).join(", ")||"none")+' · config: '+esc((x.radioConfigKeys||[]).join(", ")||"none")+'</b></div>'
+    ).join(""):'<div><span>RF field discovery</span><b>No AP diagnostic structure returned yet.</b></div>';
+  }
+}
+
+async function loadRfEnvironment(){
+  const hours=Number(document.getElementById("rfEnvironmentRange")?.value||24);
+  try{
+    const r=await fetch("/api/rf-environment?hours="+encodeURIComponent(hours),{cache:"no-store"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Unable to load RF environment");
+    renderRfEnvironment(d);
+  }catch(e){
+    const notice=document.getElementById("rfEnvironmentNotice");
+    if(notice)notice.innerHTML='<b class="warn">Unable to load RF environment</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }
+}
+
+async function sampleRfEnvironmentNow(){
+  const btn=document.getElementById("rfSampleNowBtn");
+  if(btn){btn.disabled=true;btn.textContent="Refreshing…";}
+  try{
+    const r=await fetch("/api/rf-environment/sample",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Passive RF sample failed");
+    await loadRfEnvironment();
+  }catch(e){
+    const notice=document.getElementById("rfEnvironmentNotice");
+    if(notice)notice.innerHTML='<b class="warn">Passive RF refresh failed</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Refresh passive RF";}
+  }
+}
+
+document.getElementById("rfEnvironmentRange")?.addEventListener("change",loadRfEnvironment);
+document.getElementById("rfSampleNowBtn")?.addEventListener("click",sampleRfEnvironmentNow);
+setInterval(()=>{
+  if(document.querySelector("#rfenvironment.page.active"))loadRfEnvironment();
+},60000);
 
 
 function renderChannelPlan(plan){
