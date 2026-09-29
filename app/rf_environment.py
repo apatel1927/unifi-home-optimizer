@@ -76,14 +76,39 @@ def _neighbor_band(n):
 
 
 def _neighbor_row(n):
-    rssi,rssi_normalized=_dbm(_first(n,("rssi","signal","signal_dbm")))
-    noise,noise_normalized=_dbm(_first(n,("noise","noise_dbm")))
+    raw_rssi=n.get("rssi") if "rssi" in n else None
+    raw_signal=n.get("signal") if "signal" in n else None
+    raw_signal_dbm=n.get("signal_dbm") if "signal_dbm" in n else None
+
+    source=None
+    source_raw=None
+    for key,value in (("rssi",raw_rssi),("signal",raw_signal),("signal_dbm",raw_signal_dbm)):
+        if _num(value) is not None:
+            source=key
+            source_raw=value
+            break
+
+    provisional,normalized=_dbm(source_raw)
+    raw_noise=n.get("noise") if "noise" in n else None
+    raw_noise_dbm=n.get("noise_dbm") if "noise_dbm" in n else None
+    noise,noise_normalized=_dbm(raw_noise if _num(raw_noise) is not None else raw_noise_dbm)
+
     return {
         "ssid":_first(n,("essid","ssid","name")),
         "bssid":_first(n,("bssid","mac")),
         "channel":_first(n,("channel","channel_number")),
-        "rssi":rssi,
-        "rssiNormalizedPositiveMagnitude":rssi_normalized,
+        # Keep the legacy normalized value for compatibility, but mark it
+        # provisional and do not treat it as validated dBm in the UI/scoring.
+        "rssi":provisional,
+        "rssiNormalizedPositiveMagnitude":normalized,
+        "signalObservationSource":source,
+        "signalObservationRaw":source_raw,
+        "provisionalSignal":provisional,
+        "rawRssi":raw_rssi,
+        "rawSignal":raw_signal,
+        "rawSignalDbm":raw_signal_dbm,
+        "rawNoise":raw_noise,
+        "rawNoiseDbm":raw_noise_dbm,
         "noiseDbm":noise,
         "noiseNormalizedPositiveMagnitude":noise_normalized,
         "band":_neighbor_band(n),
@@ -204,7 +229,32 @@ def parse_rf_environment(classic_devices, rogue_aps=None):
 
     rssi_normalized=sum(1 for n in neighbors if n.get("rssiNormalizedPositiveMagnitude"))
     noise_normalized=sum(1 for n in neighbors if n.get("noiseNormalizedPositiveMagnitude"))
-    rssi_missing=sum(1 for n in neighbors if n.get("rssi") is None)
+    rssi_missing=sum(1 for n in neighbors if n.get("provisionalSignal") is None)
+    raw_rssi_count=sum(1 for n in neighbors if n.get("rawRssi") not in (None,""))
+    raw_signal_count=sum(1 for n in neighbors if n.get("rawSignal") not in (None,""))
+    raw_signal_dbm_count=sum(1 for n in neighbors if n.get("rawSignalDbm") not in (None,""))
+    paired_rssi_signal=sum(1 for n in neighbors if n.get("rawRssi") not in (None,"") and n.get("rawSignal") not in (None,""))
+
+    signal_examples=[]
+    for n in neighbors:
+        if len(signal_examples)>=12:
+            break
+        if all(n.get(k) in (None,"") for k in ("rawRssi","rawSignal","rawSignalDbm")):
+            continue
+        signal_examples.append({
+            "ssid":n.get("ssid"),
+            "bssid":n.get("bssid"),
+            "band":n.get("band"),
+            "channel":n.get("channel"),
+            "rawRssi":n.get("rawRssi"),
+            "rawSignal":n.get("rawSignal"),
+            "rawSignalDbm":n.get("rawSignalDbm"),
+            "source":n.get("signalObservationSource"),
+            "sourceRaw":n.get("signalObservationRaw"),
+            "provisionalSignal":n.get("provisionalSignal"),
+            "normalizedPositiveMagnitude":bool(n.get("rssiNormalizedPositiveMagnitude")),
+        })
+
     return {
         "radios":rows,
         "neighbors":neighbors,
@@ -214,6 +264,11 @@ def parse_rf_environment(classic_devices, rogue_aps=None):
             "neighborRssiPositiveMagnitudeNormalized":rssi_normalized,
             "neighborNoisePositiveMagnitudeNormalized":noise_normalized,
             "neighborRssiMissingOrInvalid":rssi_missing,
-            "detail":"Positive neighboring-BSS signal magnitudes are normalized to conventional negative dBm for display only. Neighbor RSSI is not used to choose channels until controller semantics are independently validated."
+            "neighborRawRssiCount":raw_rssi_count,
+            "neighborRawSignalCount":raw_signal_count,
+            "neighborRawSignalDbmCount":raw_signal_dbm_count,
+            "neighborPairedRssiSignalCount":paired_rssi_signal,
+            "signalExamples":signal_examples,
+            "detail":"Raw rogue-AP rssi, signal, and signal_dbm fields are captured separately. A provisional normalized signal is shown without claiming dBm semantics, and no neighbor signal field is used to choose or score channels until the U7/controller field meaning is independently validated."
         },
     }
