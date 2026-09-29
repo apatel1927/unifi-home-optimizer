@@ -477,7 +477,7 @@
       </div>
 
       <div class="panel notice">
-        Safe advisory mode: the official UniFi Network API used by this app does not expose a documented neighboring-network RF scan or a supported per-AP radio write endpoint. This planner will recommend channels, but it will not silently change AP radio settings.
+        Safe advisory mode: the planner now uses passive classic RF telemetry when your controller exposes it, alongside retry history and own-AP overlap. Active/off-channel scanning remains disabled until its controller-specific command is separately verified. Radio changes still use the gated A/B/A workflow rather than silent tuning.
       </div>
 
       <div class="summary-grid" id="channelSummaryCards"></div>
