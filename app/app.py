@@ -778,7 +778,7 @@ def _validate_ai_proposal(proposal, snapshot=None):
             retry=db.ap_retry_trends(15)
         except Exception:
             retry={}
-        plan=build_channel_plan(snap,retry)
+        plan=build_channel_plan(snap,retry,rf_environment_live)
         candidate=next((
             x for x in (plan.get("items") or [])
             if x.get("apId")==params.get("apId")
