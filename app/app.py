@@ -741,6 +741,125 @@ def _ai_status(include_history=True):
         "advisoryOnly":True,
     }
 
+def _validate_ai_proposal(proposal, snapshot=None):
+    action=proposal.get("actionType")
+    params=proposal.get("params") or {}
+
+    if action=="REVIEW_SETTING":
+        return True,None
+
+    if action=="AUTO_OPTIMIZE_RUN":
+        snap=snapshot or build_snapshot(api)
+        if not snap:
+            return False,"Unable to retrieve current UniFi snapshot"
+        eligible=False
+        for w in snap.get("wifiBroadcasts") or []:
+            if w.get("type")!="STANDARD":
+                continue
+            bands=w.get("broadcastingFrequenciesGHz") or []
+            if (len(bands)>=2 and w.get("bandSteeringEnabled") is False) or w.get("bssTransitionEnabled") is False:
+                eligible=True
+                break
+        return (True,None) if eligible else (False,"No current STANDARD Wi-Fi broadcast needs an Auto Optimize change")
+
+    if action=="RF_ABA_TEST":
+        required=("apId","apName","band","proposedChannel","proposedWidthMHz")
+        if any(params.get(k) in (None,"") for k in required):
+            return False,"RF proposal is missing required parameters"
+        snap=snapshot or build_snapshot(api)
+        if not snap:
+            return False,"Unable to retrieve current UniFi snapshot"
+        try:
+            band=float(params.get("band"))
+        except Exception:
+            return False,"Invalid RF band"
+        try:
+            retry=db.ap_retry_trends(15)
+        except Exception:
+            retry={}
+        plan=build_channel_plan(snap,retry)
+        candidate=next((
+            x for x in (plan.get("items") or [])
+            if x.get("apId")==params.get("apId")
+            and float(x.get("band") or 0)==band
+        ),None)
+        if not candidate:
+            return False,"Current Channel Planner no longer contains this AP/radio"
+        if not candidate.get("testableChange") or candidate.get("status")!="CONSIDER_CHANGE":
+            return False,"Current Channel Planner no longer supports testing this change"
+        if candidate.get("recommendedChannel")!=params.get("proposedChannel") or candidate.get("recommendedWidthMHz")!=params.get("proposedWidthMHz"):
+            return False,"RF proposal is stale; the current recommended setting has changed"
+
+        live=_current_radio_config(snap,params.get("apId"),band)
+        if not live:
+            return False,"Unable to read current radio configuration"
+        if live.get("channel")==params.get("proposedChannel") and live.get("widthMHz")==params.get("proposedWidthMHz"):
+            return False,"Proposed RF setting is already active"
+
+        bad_results={"WORSE_CONFIRMED","WORSE_TOPOLOGY","INVALID_NO_CHANGE"}
+        for t in db.list_optimization_tests(100):
+            if t.get("ap_id")!=params.get("apId") or float(t.get("band") or 0)!=band:
+                continue
+            same=(t.get("proposed_channel")==params.get("proposedChannel") and
+                  t.get("proposed_width_mhz")==params.get("proposedWidthMHz"))
+            if same and (t.get("result") in bad_results or t.get("status") in bad_results):
+                return False,"Stored RF history marks this same candidate as worse/invalid; a new proposal requires materially changed conditions"
+
+        active={"PROPOSED","MONITORING","ROLLBACK_REQUIRED","ROLLBACK_MONITORING"}
+        if any(t.get("status") in active for t in db.list_optimization_tests(100)):
+            return False,"Another RF A/B/A test is already active"
+        return True,None
+
+    return False,"Unsupported proposal action"
+
+def _execute_ai_proposal(proposal):
+    action=proposal.get("action_type") or proposal.get("actionType")
+    params=proposal.get("params") or {}
+    normalized={
+        "actionType":action,
+        "params":params,
+    }
+    ok,error=_validate_ai_proposal(normalized)
+    if not ok:
+        return {"ok":False,"error":error}
+
+    if action=="REVIEW_SETTING":
+        return {"ok":True,"status":"ACKNOWLEDGED","detail":"Review item acknowledged; no network setting was changed."}
+
+    if action=="AUTO_OPTIMIZE_RUN":
+        result=auto_optimize(api,db)
+        return {"ok":bool(result.get("ok")),"status":"EXECUTED" if result.get("ok") else "FAILED","detail":result}
+
+    if action=="RF_ABA_TEST":
+        snap=build_snapshot(api)
+        band=float(params.get("band"))
+        live=_current_radio_config(snap,params.get("apId"),band) if snap else None
+        now=datetime.now(timezone.utc)
+        baseline_stats=db.ap_window_stats(
+            params.get("apId"),band,
+            (now-timedelta(minutes=60)).isoformat(),
+            now.isoformat()
+        )
+        trends=db.ap_retry_trends(15)
+        baseline=_trend_retry_for_band(trends,params.get("apId"),band)
+        baseline60=baseline_stats.get("retryAvg")
+        item=db.create_optimization_test(
+            params.get("apId"),params.get("apName"),band,
+            params.get("proposedChannel"),params.get("proposedWidthMHz"),
+            (live or {}).get("channel"),(live or {}).get("widthMHz"),
+            "Approved from AI proposal queue",
+            baseline,
+            "15-min average" if baseline is not None else "unavailable",
+            baseline60,
+            baseline_stats.get("clientAvg"),
+            baseline_stats.get("sampleCount")
+        )
+        if db.get_setting("auto_rf_enabled","0")=="1":
+            evaluate_optimization_tests(snap)
+        return {"ok":True,"status":"EXECUTED","detail":{"optimizationTestId":item.get("id"),"status":item.get("status")}}
+
+    return {"ok":False,"error":"Unsupported proposal action"}
+
 def run_ai_analysis(trigger="manual"):
     global ai_running,ai_started_at,ai_last_error
     if not OPENAI_API_KEY:
@@ -1600,6 +1719,128 @@ def ai_settings():
         except Exception:
             return jsonify({"ok":False,"error":"Invalid AI interval"}),400
     return jsonify({"ok":True,**_ai_status()})
+
+@app.route("/api/rf-environment")
+def rf_environment_data():
+    try:
+        hours=int(request.args.get("hours","24"))
+    except Exception:
+        hours=24
+    if hours not in (1,24,168,720):
+        hours=24
+    summary=db.rf_environment_summary(hours)
+    live=rf_environment_live or {"radios":[],"neighbors":[],"diagnostics":[]}
+    if private_api.configured and not live.get("radios"):
+        live=_collect_rf_environment()
+    return jsonify({
+        "ok":True,
+        **summary,
+        "liveRadios":live.get("radios") or [],
+        "neighbors":live.get("neighbors") or [],
+        "diagnostics":live.get("diagnostics") or [],
+        "privateConfigured":private_api.configured,
+        "sampleIntervalSeconds":rf_environment_sample_seconds,
+        "lastSampleAt":rf_environment_last_sample_at,
+        "lastError":rf_environment_last_error,
+        "activeScanAvailable":False,
+        "activeScanDetail":"Active spectrum/RF scanning is intentionally disabled until a controller-specific scan command is verified. Passive telemetry and neighboring-BSS observations are read-only."
+    })
+
+@app.route("/api/rf-environment/sample",methods=["POST"])
+def rf_environment_sample_now():
+    if not private_api.configured:
+        return jsonify({"ok":False,"error":"Private/classic UniFi credentials are not configured"}),400
+    snap=build_snapshot(api)
+    parsed=_sample_rf_environment(snap)
+    return jsonify({
+        "ok":True,
+        "radios":parsed.get("radios") or [],
+        "neighbors":parsed.get("neighbors") or [],
+        "lastSampleAt":rf_environment_last_sample_at,
+        "lastError":rf_environment_last_error,
+    })
+
+@app.route("/api/wired-expectations",methods=["GET","POST"])
+def wired_expectations_route():
+    if request.method=="GET":
+        return jsonify({"ok":True,"items":db.wired_expectations()})
+    body=request.get_json(silent=True) or {}
+    scope=str(body.get("scopeKey") or "").strip()
+    if not scope:
+        return jsonify({"ok":False,"error":"scopeKey is required"}),400
+    try:
+        speed=int(body.get("expectedSpeedMbps"))
+    except Exception:
+        return jsonify({"ok":False,"error":"Expected speed must be an integer Mbps value"}),400
+    if speed not in (10,100,1000,2500,5000,10000,25000,40000,100000):
+        return jsonify({"ok":False,"error":"Expected speed must be one of 10, 100, 1000, 2500, 5000, 10000, 25000, 40000, or 100000 Mbps"}),400
+    item=db.set_wired_expectation(
+        scope,
+        body.get("endpointName"),
+        speed,
+        body.get("note")
+    )
+    return jsonify({"ok":True,"item":item})
+
+@app.route("/api/wired-expectations/delete",methods=["POST"])
+def wired_expectations_delete():
+    body=request.get_json(silent=True) or {}
+    scope=str(body.get("scopeKey") or "").strip()
+    if not scope:
+        return jsonify({"ok":False,"error":"scopeKey is required"}),400
+    return jsonify({"ok":True,"deleted":db.delete_wired_expectation(scope)})
+
+@app.route("/api/ai/proposals")
+def ai_proposals():
+    return jsonify({"ok":True,"items":db.list_ai_proposals(50)})
+
+@app.route("/api/ai/proposals/refresh",methods=["POST"])
+def ai_proposals_refresh():
+    if not OPENAI_API_KEY:
+        return jsonify({"ok":False,"error":"OPENAI_API_KEY is not configured"}),400
+    if _rf_test_active():
+        return jsonify({"ok":False,"error":"Wait for the active RF A/B/A test to finish before generating a new approval queue"}),409
+    try:
+        context=_build_support_context()
+        result=generate_ai_proposals(OPENAI_API_KEY,OPENAI_MODEL,sanitize(context))
+        if not result.get("ok"):
+            return jsonify(result),500
+        validated=[]
+        snapshot=context.get("snapshot") or build_snapshot(api)
+        for p in result.get("proposals") or []:
+            ok,error=_validate_ai_proposal(p,snapshot)
+            if ok:
+                validated.append(p)
+            elif p.get("actionType")=="REVIEW_SETTING":
+                validated.append(p)
+        items=db.replace_pending_ai_proposals(validated)
+        return jsonify({"ok":True,"items":items,"generated":len(validated)})
+    except Exception as e:
+        return jsonify({"ok":False,"error":str(e)}),500
+
+@app.route("/api/ai/proposals/<int:proposal_id>/reject",methods=["POST"])
+def ai_proposal_reject(proposal_id):
+    item=db.get_ai_proposal(proposal_id)
+    if not item:
+        return jsonify({"ok":False,"error":"Proposal not found"}),404
+    if item.get("status")!="PENDING":
+        return jsonify({"ok":False,"error":"Only pending proposals can be rejected"}),400
+    return jsonify({"ok":True,"item":db.update_ai_proposal(proposal_id,"REJECTED","Rejected by user")})
+
+@app.route("/api/ai/proposals/<int:proposal_id>/approve",methods=["POST"])
+def ai_proposal_approve(proposal_id):
+    item=db.get_ai_proposal(proposal_id)
+    if not item:
+        return jsonify({"ok":False,"error":"Proposal not found"}),404
+    if item.get("status")!="PENDING":
+        return jsonify({"ok":False,"error":"Only pending proposals can be approved"}),400
+    result=_execute_ai_proposal(item)
+    if result.get("ok"):
+        status="ACKNOWLEDGED" if result.get("status")=="ACKNOWLEDGED" else "EXECUTED"
+        updated=db.update_ai_proposal(proposal_id,status,json.dumps(result.get("detail"),default=str))
+        return jsonify({"ok":True,"item":updated,"execution":result})
+    updated=db.update_ai_proposal(proposal_id,"FAILED",result.get("error"))
+    return jsonify({"ok":False,"error":result.get("error"),"item":updated}),409
 
 @app.route("/api/report")
 def report():
