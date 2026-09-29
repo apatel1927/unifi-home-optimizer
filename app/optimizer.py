@@ -249,7 +249,31 @@ def radio_conflict_key(band, channel, width):
         return _six_ghz_block(channel, width)
     return None
 
-def build_channel_plan(snapshot, retry_trends=None):
+def _rf_metrics_for(ap, band, rf_environment):
+    if not rf_environment:
+        return {}
+    rows=rf_environment.get("radios") or rf_environment.get("liveRadios") or rf_environment.get("latest") or []
+    mac=str(ap.get("macAddress") or ap.get("mac") or "").lower().replace("-",":")
+    name=str(ap.get("name") or "")
+    for r in rows:
+        try:
+            same_band=float(r.get("band"))==float(band)
+        except Exception:
+            same_band=False
+        if not same_band:
+            continue
+        rmac=str(r.get("apMac") or r.get("ap_mac") or "").lower().replace("-",":")
+        rname=str(r.get("apName") or r.get("ap_name") or "")
+        if (mac and rmac==mac) or (name and rname==name):
+            return {
+                "rfUtilizationPct":r.get("channelUtilizationPct") if r.get("channelUtilizationPct") is not None else r.get("channel_utilization_pct"),
+                "rfExternalBusyPct":r.get("externalBusyPct") if r.get("externalBusyPct") is not None else r.get("external_busy_pct"),
+                "rfNoiseDbm":r.get("noiseDbm") if r.get("noiseDbm") is not None else r.get("noise_dbm"),
+                "rfNeighborCount":r.get("neighborCount") if r.get("neighborCount") is not None else r.get("neighbor_count"),
+            }
+    return {}
+
+def build_channel_plan(snapshot, retry_trends=None, rf_environment=None):
     retry_trends = retry_trends or {}
     aps=[d for d in snapshot.get("devices",[]) if d.get("optimizerType")=="ACCESS_POINT"]
     plan=[]
@@ -266,7 +290,8 @@ def build_channel_plan(snapshot, retry_trends=None):
             row={
                 "apId":ap.get("id"),"apName":ap.get("name"),"model":ap.get("model"),
                 "band":band,"channel":r.get("channel"),"widthMHz":r.get("channelWidthMHz"),
-                "retryPct":retry,"retryBasis":basis,"clientCount":ap.get("clientCount",0)
+                "retryPct":retry,"retryBasis":basis,"clientCount":ap.get("clientCount",0),
+                **_rf_metrics_for(ap,band,rf_environment)
             }
             if band==5:
                 row["channelBlock"]=_five_ghz_block(row["channel"],row["widthMHz"])
@@ -302,6 +327,10 @@ def build_channel_plan(snapshot, retry_trends=None):
         if width and width>20: config_actions.append("Change width to 20 MHz")
         if ch not in (1,6,11): config_actions.append(f"Move to channel {rec_ch}")
         if retry is not None and retry>=15: diagnostic_actions.append("Investigate external interference / client quality")
+        if row.get("rfUtilizationPct") is not None and float(row.get("rfUtilizationPct"))>=60:
+            diagnostic_actions.append("High current-channel utilization in passive RF telemetry")
+        if row.get("rfExternalBusyPct") is not None and float(row.get("rfExternalBusyPct"))>=40:
+            diagnostic_actions.append("High external busy time on the current channel")
         testable=(rec_ch!=ch or 20!=width)
         status="CONSIDER_CHANGE" if testable else ("INVESTIGATE" if diagnostic_actions else "KEEP")
         actions=config_actions+diagnostic_actions
@@ -333,6 +362,10 @@ def build_channel_plan(snapshot, retry_trends=None):
             config_actions.append(f"Consider {target['block']} block (primary channel {target['channel']})")
         if row.get("retryPct") is not None and row["retryPct"]>=15:
             diagnostic_actions.append("High retry trend: prioritize a cleaner block after RF survey")
+        if row.get("rfUtilizationPct") is not None and float(row.get("rfUtilizationPct"))>=60:
+            diagnostic_actions.append("High current-channel utilization in passive RF telemetry")
+        if row.get("rfExternalBusyPct") is not None and float(row.get("rfExternalBusyPct"))>=40:
+            diagnostic_actions.append("High external busy time on the current channel")
         testable=(current!=target["block"] or row.get("widthMHz")!=80)
         status="CONSIDER_CHANGE" if testable else ("INVESTIGATE" if diagnostic_actions else "KEEP")
         actions=config_actions+diagnostic_actions
@@ -355,6 +388,10 @@ def build_channel_plan(snapshot, retry_trends=None):
         if row.get("retryPct") is not None and row["retryPct"]>=15 and row.get("widthMHz",0)>160:
             recommended_width=160
             actions.append("Elevated retries: consider reducing 320 MHz to 160 MHz")
+        if row.get("rfUtilizationPct") is not None and float(row.get("rfUtilizationPct"))>=60:
+            actions.append("High current-channel utilization in passive RF telemetry")
+        if row.get("rfExternalBusyPct") is not None and float(row.get("rfExternalBusyPct"))>=40:
+            actions.append("High external busy time on the current channel")
         testable=(recommended_width!=row.get("widthMHz"))
         status="CONSIDER_CHANGE" if testable else ("INVESTIGATE" if actions else "KEEP")
         plan.append({**row,"recommendedChannel":row.get("channel"),"recommendedWidthMHz":recommended_width,
@@ -366,7 +403,8 @@ def build_channel_plan(snapshot, retry_trends=None):
         "externalRfScanAvailable":False,
         "automaticRadioWritesAvailable":False,
         "notes":[
-            "Planner uses current AP radio configuration, AP-to-AP channel overlap, client load and retry trends.",
+            "Planner uses current AP radio configuration, AP-to-AP channel overlap, client load, retry trends, and passive RF environment telemetry when available.",
+            "Passive RF utilization/noise describes the current channel. It does not prove that an unscanned candidate channel is cleaner.",
             "The official UniFi Network API used by this app does not expose a documented neighboring-network RF scan or per-AP radio write endpoint.",
             "Recommended DFS channels may be cleaner but can change if radar is detected."
         ],
