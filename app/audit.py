@@ -65,6 +65,7 @@ def build_network_audit(snapshot, api, wired_audit=None):
     acl_rules=api.acl_rules(site_id) if site_id else []
     dns_policies=api.dns_policies(site_id) if site_id else []
     wans=api.wan_interfaces(site_id) if site_id else []
+    qos_rules=api.qos_rules(site_id) if site_id else None
 
     # Device health / software / basic stability.
     offline=[d for d in devices if d.get("state")!="ONLINE"]
@@ -316,6 +317,23 @@ def build_network_audit(snapshot, api, wired_audit=None):
              "Confirm the disabled state is intentional.")
 
     # DNS / WAN inventories.
+    if qos_rules is not None:
+        enabled_qos=[x for x in qos_rules if x.get("enabled") is not False]
+        disabled_qos=[x for x in qos_rules if x.get("enabled") is False]
+        if enabled_qos:
+            names=[str(x.get("name") or x.get("description") or x.get("id") or "Unnamed QoS rule") for x in enabled_qos]
+            preview=", ".join(names[:4]) + ("…" if len(names)>4 else "")
+            _add(findings,"WARNING","WAN","Gateway QoS can reduce multi-gigabit throughput",
+                 f"{len(enabled_qos)} enabled gateway QoS rule(s) detected: {preview}. UniFi documents that enabling gateway QoS disables hardware offloading and can reduce throughput for traffic above 1 Gbps.",
+                 "Gateway QoS",
+                 "For multi-gigabit WANs, keep gateway QoS disabled unless the prioritization/limit is required. If disabling a rule does not immediately restore throughput, perform a controlled gateway reboot and retest.")
+        else:
+            _add(findings,"PASS","WAN","No enabled gateway QoS rules",
+                 f"{len(disabled_qos)} configured QoS rule(s) are disabled; no enabled gateway QoS rule was returned by the Integration API.")
+    else:
+        # Do not penalize controllers that do not expose the QoS endpoint.
+        pass
+
     if wans:
         _add(findings,"PASS","WAN","WAN interface inventory available",
              f"{len(wans)} WAN interface definition(s) were returned.")
@@ -354,6 +372,8 @@ def build_network_audit(snapshot, api, wired_audit=None):
             "aclRules":acl_rules,
             "dnsPolicies":dns_policies,
             "wans":wans,
+            "qosRules":qos_rules or [],
+            "qosRulesAvailable":qos_rules is not None,
             "networks":networks,
             "wifi":wifi,
         },
