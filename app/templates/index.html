@@ -207,11 +207,20 @@
             <option value="168">Last 7 days</option>
             <option value="720">Last 30 days</option>
           </select>
+          <button id="trafficSampleNowBtn" class="secondary">Sample now</button>
+          <button id="trafficDiagnosticsBtn" class="secondary">Diagnostics</button>
           <button class="secondary" onclick="loadTraffic()">Refresh</button>
         </div>
       </div>
 
       <div id="trafficNotice" class="panel notice">Loading traffic data…</div>
+      <div id="trafficDiagnosticsPanel" class="panel notice traffic-diagnostics-panel" style="display:none">
+        <div class="section-head compact-head">
+          <div><h3>Traffic collector diagnostics</h3><span class="muted">Safe structural diagnostics only — no passwords, tokens, URLs, or packet contents.</span></div>
+          <button id="trafficDiagnosticsCloseBtn" class="secondary">Close</button>
+        </div>
+        <div id="trafficDiagnosticsContent" class="system-list"></div>
+      </div>
 
       <div class="summary-grid traffic-summary-grid">
         <div class="summary-card"><h3>Live RX</h3><div id="trafficLiveRx" class="big">—</div><div class="muted">Aggregate client receive rate</div></div>
@@ -430,6 +439,10 @@
           <span class="muted">A/B/A verification: 60-minute original baseline, 15-minute settling period, 60-minute new-setting observation, then rollback verification against the original setting.</span>
         </div>
         <button class="secondary" onclick="loadOptimizationTests()">Refresh tests</button>
+      </div>
+      <div class="panel notice">
+        <b>Wi-Fi revalidation policy</b><br>
+        <span class="muted">Retest one RF variable at a time. Cancelled tests can now be retested from their test card. Confirmed-worse results stay historical evidence and should only be repeated when conditions have materially changed. A clean comparison uses a fresh 60-minute baseline, 15-minute settle period, 60-minute B observation, then rollback verification.</span>
       </div>
       <div id="optimizationTests" class="test-grid"></div>
 
