@@ -166,6 +166,28 @@ class PrivateUniFiAPI:
     def rogue_aps(self):
         return self._items(self.classic("GET","/stat/rogueap"))
 
+    def qos_rules(self):
+        """Read gateway QoS rules from UniFi Network's local v2 API.
+
+        Returns None when the endpoint is unavailable so callers can distinguish
+        "no configured rules" from "controller did not expose QoS inventory".
+        """
+        result=self._request(
+            "GET",
+            f"/proxy/network/v2/api/site/{self.site}/qos-rules",
+        )
+        if not result.get("ok"):
+            return None
+        payload=result.get("data")
+        if isinstance(payload,list):
+            return payload
+        if isinstance(payload,dict):
+            if isinstance(payload.get("data"),list):
+                return payload["data"]
+            if isinstance(payload.get("items"),list):
+                return payload["items"]
+        return []
+
     def discover_radios(self):
         devices=self.devices()
         aps=[]
