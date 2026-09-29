@@ -270,6 +270,7 @@ def _rf_metrics_for(ap, band, rf_environment):
                 "rfExternalBusyPct":r.get("externalBusyPct") if r.get("externalBusyPct") is not None else r.get("external_busy_pct"),
                 "rfNoiseDbm":r.get("noiseDbm") if r.get("noiseDbm") is not None else r.get("noise_dbm"),
                 "rfNeighborCount":r.get("neighborCount") if r.get("neighborCount") is not None else r.get("neighbor_count"),
+                "rfNeighborRssiTrusted":False,
             }
     return {}
 
@@ -402,9 +403,11 @@ def build_channel_plan(snapshot, retry_trends=None, rf_environment=None):
         "mode":"SAFE_ADVISORY",
         "externalRfScanAvailable":False,
         "automaticRadioWritesAvailable":False,
+        "neighborRssiTrusted":False,
         "notes":[
             "Planner uses current AP radio configuration, AP-to-AP channel overlap, client load, retry trends, and passive RF environment telemetry when available.",
             "Passive RF utilization/noise describes the current channel. It does not prove that an unscanned candidate channel is cleaner.",
+            "Neighbor RSSI is observational only and is not used to choose or score a candidate channel until controller field semantics are independently validated.",
             "The official UniFi Network API used by this app does not expose a documented neighboring-network RF scan or per-AP radio write endpoint.",
             "Recommended DFS channels may be cleaner but can change if radar is detected."
         ],
