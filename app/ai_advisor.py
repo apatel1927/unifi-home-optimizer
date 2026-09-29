@@ -23,6 +23,7 @@ def build_ai_input(context):
     wan=context.get("wanQuality24h") or {}
     traffic=context.get("traffic24h") or {}
     speed=context.get("speedtest") or {}
+    rf_environment=context.get("rfEnvironment24h") or {}
     snapshot=context.get("snapshot") or {}
 
     compact={
@@ -96,6 +97,13 @@ def build_ai_input(context):
             "usage":traffic.get("usage"),
             "dpi":traffic.get("dpi"),
         },
+        "rfEnvironment":{
+            "latest":rf_environment.get("latest"),
+            "averages":rf_environment.get("averages"),
+            "neighbors":rf_environment.get("neighbors"),
+            "lastSampleAt":rf_environment.get("lastSampleAt"),
+            "lastError":rf_environment.get("lastError"),
+        },
         "optimizationTests":context.get("optimizationTests") or [],
         "automationState":context.get("automationState") or {},
         "channelPlan":context.get("channelPlan") or {},
@@ -124,10 +132,13 @@ Rules:
 - Prefer reversible, low-risk actions.
 - The AI is advisory. Do not claim that you changed any setting.
 - When a deterministic automation already exists (Auto RF or Auto Optimize), say whether it is a suitable execution path.
+- Auto Optimize only enables Band Steering and BSS Transition on eligible STANDARD Wi-Fi broadcasts. Do not describe it as a general execution path for other network changes.
+- Use automationState.autoOptimizeCapabilities and automationState.autoRfCapabilities as the authoritative execution scope.
 - Auto RF is an experimental validated private/classic UniFi API path, not an official/supported radio-write API. Never call Auto RF an official execution path.
 - Treat channelPlan.automaticRadioWritesAvailable as describing the supported official API only. Use automationState to determine whether the validated private/classic Auto RF path is actually available.
 - Use optimizationTests as historical evidence. Do not recommend repeating a previously completed WORSE_CONFIRMED, WORSE_TOPOLOGY, INVALID_NO_CHANGE, or clearly worse test unless you can identify a materially changed condition and explain why a retest is justified.
 - If a prior RF test already produced a confirmed result, prefer that evidence over a generic planner recommendation.
+- Use passive RF environment telemetry (channel utilization, external busy time, noise and neighboring BSS observations) as supporting evidence when present. Do not invent missing RF scan data.
 - Distinguish learned history since app restart from long-term evidence when the supplied data does not establish how long a counter has been observed.
 - Do not promote REVIEW-only findings into a recommendation to enable/disable a feature unless the supplied telemetry establishes a concrete benefit or a security requirement. For DHCP guarding, disabled firewall policies, client isolation, MLO and similar context-dependent settings, use language such as "review", "confirm intent", or "consider after validation" unless there is stronger evidence.
 - A disabled policy is not evidence that it should be enabled. State the observed disabled status and what must be confirmed before any change.
