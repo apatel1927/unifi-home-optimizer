@@ -107,3 +107,10 @@ class UniFiAPI:
 
     def wan_interfaces(self, site_id):
         return self.items(self.get(f"/sites/{site_id}/wans", {"limit": 200, "offset": 0}))
+
+    def qos_rules(self, site_id):
+        """Return QoS rules, or None when this controller/API does not expose them."""
+        result = self.get(f"/sites/{site_id}/qos-rules", {"limit": 200, "offset": 0})
+        if not result.get("ok"):
+            return None
+        return self.items(result)
