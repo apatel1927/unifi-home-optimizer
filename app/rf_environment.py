@@ -16,7 +16,7 @@ def _first(d, keys):
     return None
 
 
-def _band_from_radio(value, channel=None):
+def _band_from_radio(value, channel=None, frequency=None):
     s=str(value or "").lower()
     if s in ("ng","2g","2.4","2.4ghz") or "2.4" in s:
         return 2.4
@@ -24,6 +24,16 @@ def _band_from_radio(value, channel=None):
         return 5.0
     if s in ("6e","6g","6","6ghz") or s.startswith("6"):
         return 6.0
+    try:
+        freq=float(frequency)
+        if 2400 <= freq < 2500:
+            return 2.4
+        if 4900 <= freq < 5925:
+            return 5.0
+        if freq >= 5925:
+            return 6.0
+    except Exception:
+        pass
     try:
         ch=int(channel)
         if ch <= 14:
@@ -42,7 +52,8 @@ def _radio_key(r):
 def _neighbor_band(n):
     return _band_from_radio(
         _first(n,("radio","radio_name","band","frequency_band")),
-        _first(n,("channel","channel_number"))
+        _first(n,("channel","channel_number")),
+        _first(n,("frequency","freq","frequency_mhz","freq_mhz"))
     )
 
 
