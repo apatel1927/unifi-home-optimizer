@@ -114,10 +114,12 @@ def build_zip_bytes(payload):
         "network-audit.json":json.dumps(safe.get("networkAudit") or {},indent=2,sort_keys=True,default=str),
         "wired-audit.json":json.dumps(safe.get("wiredAudit") or {},indent=2,sort_keys=True,default=str),
         "wan-quality-24h.json":json.dumps(safe.get("wanQuality24h") or {},indent=2,sort_keys=True,default=str),
+        "rf-environment-24h.json":json.dumps(safe.get("rfEnvironment24h") or {},indent=2,sort_keys=True,default=str),
         "traffic-24h.json":json.dumps(safe.get("traffic24h") or {},indent=2,sort_keys=True,default=str),
         "speedtest.json":json.dumps(safe.get("speedtest") or {},indent=2,sort_keys=True,default=str),
         "snapshot.json":json.dumps(safe.get("snapshot") or {},indent=2,sort_keys=True,default=str),
         "recent-log.json":json.dumps(safe.get("recentLog") or [],indent=2,sort_keys=True,default=str),
+        "ai-proposals.json":json.dumps(safe.get("aiProposals") or [],indent=2,sort_keys=True,default=str),
     }
     bio=io.BytesIO()
     with zipfile.ZipFile(bio,"w",compression=zipfile.ZIP_DEFLATED) as z:
