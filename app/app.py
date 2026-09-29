@@ -25,7 +25,7 @@ from .rf_environment import parse_rf_environment
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.3"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.4"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -1436,6 +1436,39 @@ def _list_speedtest_servers():
     except Exception as e:
         return {"ok":False,"error":str(e)}
 
+def _gateway_qos_state():
+    state={
+        "available":False,
+        "ruleCount":0,
+        "enabledCount":0,
+        "enabledRules":[],
+        "performanceWarning":False,
+    }
+    try:
+        site=api.site()
+        site_id=(site or {}).get("id")
+        if not site_id:
+            return state
+        rules=api.qos_rules(site_id)
+        if rules is None:
+            return state
+        enabled=[x for x in rules if x.get("enabled") is not False]
+        state["available"]=True
+        state["ruleCount"]=len(rules)
+        state["enabledCount"]=len(enabled)
+        state["enabledRules"]=[
+            {
+                "id":x.get("id"),
+                "name":x.get("name") or x.get("description") or x.get("id") or "Unnamed QoS rule",
+            }
+            for x in enabled[:20]
+        ]
+        state["performanceWarning"]=bool(enabled)
+        return state
+    except Exception as e:
+        state["error"]=str(e)
+        return state
+
 def _speedtest_state():
     summary=db.speedtest_summary(30)
     interval=max(1,min(24,int(float(db.get_setting("speedtest_interval_hours","6") or 6))))
@@ -1462,6 +1495,7 @@ def _speedtest_state():
         "preferredServerId":preferred_server_id,
         "engine":"OOKLA_OFFICIAL",
         "engineAvailable":_ookla_speedtest_available(),
+        "gatewayQos":_gateway_qos_state(),
         **summary
     }
 
