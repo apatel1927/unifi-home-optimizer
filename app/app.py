@@ -25,7 +25,7 @@ from .rf_environment import parse_rf_environment
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.4"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.5"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -674,7 +674,7 @@ def _build_support_context():
     analysis=analyze(snap,retry,baselines)
     channel_plan=build_channel_plan(snap,retry,rf_environment_live)
     wired=_wired_audit_for_snapshot(snap)
-    audit=build_network_audit(snap,api,wired_audit=wired)
+    audit=build_network_audit(snap,api,wired_audit=wired,qos_state=_gateway_qos_state((snap.get('site') or {}).get('id')))
 
     snap_export=dict(snap)
     snap_export["clients"]=_enrich_client_inventory(snap)
@@ -1436,33 +1436,68 @@ def _list_speedtest_servers():
     except Exception as e:
         return {"ok":False,"error":str(e)}
 
-def _gateway_qos_state():
+def _gateway_qos_state(site_id=None):
     state={
         "available":False,
+        "source":None,
         "ruleCount":0,
         "enabledCount":0,
         "enabledRules":[],
+        "rules":[],
         "performanceWarning":False,
     }
     try:
-        site=api.site()
-        site_id=(site or {}).get("id")
-        if not site_id:
-            return state
-        rules=api.qos_rules(site_id)
+        rules=None
+        # Network 9.4+ exposes gateway QoS through a local v2 endpoint.
+        # Prefer it when the private/local API is configured because the
+        # Integration API is not guaranteed to expose QoS inventory.
+        if private_api.configured:
+            try:
+                rules=private_api.qos_rules()
+                if rules is not None:
+                    state["source"]="LOCAL_V2"
+            except Exception as e:
+                state["localError"]=str(e)
+
+        # Keep the Integration API probe as a forward-compatible fallback.
+        if rules is None:
+            if not site_id:
+                site=api.site()
+                site_id=(site or {}).get("id")
+            if site_id:
+                rules=api.qos_rules(site_id)
+                if rules is not None:
+                    state["source"]="INTEGRATION"
+
         if rules is None:
             return state
-        enabled=[x for x in rules if x.get("enabled") is not False]
+
+        compact=[]
+        for x in rules:
+            if not isinstance(x,dict):
+                continue
+            name=x.get("name") or x.get("description") or x.get("id") or x.get("_id") or "Unnamed QoS rule"
+            enabled=x.get("enabled")
+            if enabled is None:
+                enabled=x.get("enable")
+            enabled = enabled is not False
+            objective=(x.get("objective")
+                       or x.get("action")
+                       or x.get("type")
+                       or x.get("mode"))
+            compact.append({
+                "id":x.get("id") or x.get("_id"),
+                "name":str(name),
+                "enabled":bool(enabled),
+                "objective":objective,
+            })
+
+        enabled=[x for x in compact if x.get("enabled")]
         state["available"]=True
-        state["ruleCount"]=len(rules)
+        state["ruleCount"]=len(compact)
         state["enabledCount"]=len(enabled)
-        state["enabledRules"]=[
-            {
-                "id":x.get("id"),
-                "name":x.get("name") or x.get("description") or x.get("id") or "Unnamed QoS rule",
-            }
-            for x in enabled[:20]
-        ]
+        state["enabledRules"]=enabled[:20]
+        state["rules"]=compact[:100]
         state["performanceWarning"]=bool(enabled)
         return state
     except Exception as e:
@@ -2000,7 +2035,7 @@ def network_audit():
         if not snap:
             return jsonify({"ok":False,"error":"Unable to retrieve UniFi data"}),500
         wired=_wired_audit_for_snapshot(snap)
-        result=build_network_audit(snap,api,wired_audit=wired)
+        result=build_network_audit(snap,api,wired_audit=wired,qos_state=_gateway_qos_state((snap.get('site') or {}).get('id')))
         return jsonify({
             "ok":True,
             "generatedAt":datetime.now(timezone.utc).isoformat(),
