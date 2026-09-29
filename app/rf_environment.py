@@ -7,6 +7,24 @@ def _num(value):
         return None
 
 
+def _dbm(value):
+    """Normalize UniFi RF dBm fields without pretending the vendor payload is fully validated.
+
+    Some U7 classic/rogue payloads expose signal magnitudes as positive integers
+    (for example 59 for what is conventionally -59 dBm). Convert only plausible
+    positive magnitudes and mark that normalization so callers can keep the value
+    observational until controller semantics are independently verified.
+    """
+    n=_num(value)
+    if n is None:
+        return None,False
+    if -150.0 <= n <= 0.0:
+        return n,False
+    if 0.0 < n <= 127.0:
+        return -n,True
+    return None,False
+
+
 def _first(d, keys):
     if not isinstance(d,dict):
         return None
@@ -58,12 +76,16 @@ def _neighbor_band(n):
 
 
 def _neighbor_row(n):
+    rssi,rssi_normalized=_dbm(_first(n,("rssi","signal","signal_dbm")))
+    noise,noise_normalized=_dbm(_first(n,("noise","noise_dbm")))
     return {
         "ssid":_first(n,("essid","ssid","name")),
         "bssid":_first(n,("bssid","mac")),
         "channel":_first(n,("channel","channel_number")),
-        "rssi":_num(_first(n,("rssi","signal","signal_dbm"))),
-        "noiseDbm":_num(_first(n,("noise","noise_dbm"))),
+        "rssi":rssi,
+        "rssiNormalizedPositiveMagnitude":rssi_normalized,
+        "noiseDbm":noise,
+        "noiseNormalizedPositiveMagnitude":noise_normalized,
         "band":_neighbor_band(n),
         "radio":_first(n,("radio","radio_name","band")),
         "lastSeen":_first(n,("last_seen","lastSeen","seen")),
@@ -180,8 +202,18 @@ def parse_rf_environment(classic_devices, rogue_aps=None):
             "radioStatKeys":sorted({str(k) for r in stats if isinstance(r,dict) for k in r.keys()}),
         })
 
+    rssi_normalized=sum(1 for n in neighbors if n.get("rssiNormalizedPositiveMagnitude"))
+    noise_normalized=sum(1 for n in neighbors if n.get("noiseNormalizedPositiveMagnitude"))
+    rssi_missing=sum(1 for n in neighbors if n.get("rssi") is None)
     return {
         "radios":rows,
         "neighbors":neighbors,
         "diagnostics":diagnostics,
+        "dataQuality":{
+            "neighborRssiValidated":False,
+            "neighborRssiPositiveMagnitudeNormalized":rssi_normalized,
+            "neighborNoisePositiveMagnitudeNormalized":noise_normalized,
+            "neighborRssiMissingOrInvalid":rssi_missing,
+            "detail":"Positive neighboring-BSS signal magnitudes are normalized to conventional negative dBm for display only. Neighbor RSSI is not used to choose channels until controller semantics are independently validated."
+        },
     }
