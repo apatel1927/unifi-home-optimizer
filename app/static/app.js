@@ -1446,6 +1446,7 @@ async function loadTrafficDiagnostics(){
     const coverage=Object.entries(d.counterCoverage||{}).map(([k,v])=>k+" "+v.nonzero+"/"+v.present+" nonzero").join(" · ")||"No supported counter fields found";
     const stationKeys=(d.stationKeys||[]).join(", ")||"None";
     const dpiKeys=(d.dpiKeys||[]).join(", ")||"None";
+    const stationDpiKeys=(d.stationDpiKeys||[]).join(", ")||"None";
     if(content)content.innerHTML=
       '<div><span>Classic/private API</span><b>'+(d.privateConfigured?"Configured":"Not configured")+'</b></div>'+
       '<div><span>Stations returned</span><b>'+esc(d.stationCount||0)+'</b></div>'+
@@ -1453,8 +1454,10 @@ async function loadTrafficDiagnostics(){
       '<div><span>Stored clients / 24h</span><b>'+esc(d.databaseClientCount||0)+'</b></div>'+
       '<div><span>Stored traffic / 24h</span><b>RX '+esc(bytes(d.databaseRxBytes||0))+' · TX '+esc(bytes(d.databaseTxBytes||0))+'</b></div>'+
       '<div><span>DPI tables</span><b>'+esc(d.dpiTableCount||0)+' · apps '+esc(d.dpiByAppCount||0)+' · categories '+esc(d.dpiByCategoryCount||0)+'</b></div>'+
+      '<div><span>Station DPI rows</span><b>'+esc(d.stationDpiCount||0)+'</b></div>'+
       '<div><span>Station keys</span><b class="diagnostic-keys">'+esc(stationKeys)+'</b></div>'+
-      '<div><span>DPI keys</span><b class="diagnostic-keys">'+esc(dpiKeys)+'</b></div>'+
+      '<div><span>Site DPI keys</span><b class="diagnostic-keys">'+esc(dpiKeys)+'</b></div>'+
+      '<div><span>Station DPI keys</span><b class="diagnostic-keys">'+esc(stationDpiKeys)+'</b></div>'+
       '<div><span>Last sample</span><b>'+esc(d.lastSampleAt?fmtDateTime(d.lastSampleAt):"Never")+'</b></div>'+
       '<div><span>Last error</span><b>'+esc(d.lastError||d.dpiError||"None")+'</b></div>';
   }catch(e){
