@@ -27,6 +27,7 @@ function toggleMobileNav(){
 document.getElementById("mobileNavToggle")?.addEventListener("click",toggleMobileNav);
 document.getElementById("mobileNavBackdrop")?.addEventListener("click",closeMobileNav);
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeMobileNav();});
+window.addEventListener("resize",()=>{if(window.innerWidth>800)closeMobileNav();});
 
 document.querySelectorAll(".nav").forEach(btn=>{
   btn.addEventListener("click",()=>{
@@ -37,7 +38,7 @@ document.querySelectorAll(".nav").forEach(btn=>{
     const mobileLabel=document.getElementById("mobileNavLabel");
     if(mobileLabel)mobileLabel.textContent=btn.textContent.trim();
     closeMobileNav();
-    window.scrollTo({top:0,behavior:"instant"});
+    window.scrollTo({top:0,behavior:"auto"});
     if(btn.dataset.page==="history") loadHistory();
     if(btn.dataset.page==="roaming") loadRoaming();
     if(btn.dataset.page==="internet") loadInternet();
@@ -1967,10 +1968,11 @@ function renderRfEnvironment(d){
   rfEnvironmentData=d;
   const rows=(d.liveRadios&&d.liveRadios.length?d.liveRadios:d.latest)||[];
   const neighbors=d.neighbors||[];
+  const neighborSummary=rfNeighborSummary(neighbors);
   const set=(id,val)=>{const el=document.getElementById(id);if(el)el.textContent=val};
 
   set("rfRadioCount",rows.length);
-  set("rfNeighborCount",neighbors.length);
+  set("rfNeighborCount",neighborSummary.uniqueCount);
   const utilRows=rows.filter(x=>x.channelUtilizationPct!=null||x.channel_utilization_pct!=null);
   const extRows=rows.filter(x=>x.externalBusyPct!=null||x.external_busy_pct!=null);
   const noiseRows=rows.filter(x=>x.noiseDbm!=null||x.noise_dbm!=null);
@@ -2028,7 +2030,6 @@ function renderRfEnvironment(d){
     }).join(""):'<tr><td colspan="11"><div class="empty">No passive radio statistics have been exposed yet. Use Refresh passive RF and inspect diagnostics.</div></td></tr>';
   }
 
-  const neighborSummary=rfNeighborSummary(neighbors);
   const summaryTable=document.getElementById("rfNeighborChannelSummary");
   if(summaryTable){
     summaryTable.innerHTML=neighborSummary.rows.length?neighborSummary.rows.map(g=>{
