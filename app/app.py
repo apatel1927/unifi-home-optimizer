@@ -672,7 +672,7 @@ def _build_support_context():
     retry=db.ap_retry_trends(15)
     baselines=db.ap_client_baselines(24)
     analysis=analyze(snap,retry,baselines)
-    channel_plan=build_channel_plan(snap,retry)
+    channel_plan=build_channel_plan(snap,retry,rf_environment_live)
     wired=_wired_audit_for_snapshot(snap)
     audit=build_network_audit(snap,api,wired_audit=wired)
 
@@ -945,7 +945,7 @@ def report_data():
         print("AP baseline error:", e, flush=True)
         ap_baselines = {}
     analysis = analyze(snap, retry_trends, ap_baselines)
-    channel_plan = build_channel_plan(snap, retry_trends)
+    channel_plan = build_channel_plan(snap, retry_trends, rf_environment_live)
     aps = [d for d in snap["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     switches = [d for d in snap["devices"] if d.get("optimizerType") in ("SWITCH","GATEWAY")]
     gateway = next((d for d in snap["devices"] if d.get("optimizerType") == "GATEWAY"), None)
@@ -2232,7 +2232,7 @@ def channel_plan():
         retry_trends=db.ap_retry_trends(15)
     except Exception:
         retry_trends={}
-    return jsonify({"ok":True,**build_channel_plan(snap,retry_trends)})
+    return jsonify({"ok":True,**build_channel_plan(snap,retry_trends,rf_environment_live)})
 
 @app.route("/api/system")
 def system_info():
