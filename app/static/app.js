@@ -824,6 +824,14 @@ function renderWiredPortTable(){
       '<div class="muted">recent +'+recentErrors+' err / +'+recentDrops+' drop</div>';
     const profile=[x.nativeVlan!=null?"VLAN "+x.nativeVlan:null,x.profile].filter(Boolean).join(" · ")||"—";
     const changes=(Number(x.stateChanges24h||0))+" state · "+(Number(x.speedChanges24h||0))+" speed";
+    const expected=x.expectedSpeedMbps!=null?wiredLinkSpeed(x.expectedSpeedMbps):null;
+    const expectationControls=
+      '<div class="wired-expectation">'+
+        (expected?'<span>Expected '+esc(expected)+'</span>':'')+
+        '<button class="secondary set-expected-speed-btn" data-scope="'+esc(x.expectationScopeKey||"")+'" data-name="'+esc(x.endpointName||x.deviceName+" Port "+x.portIdx)+'" data-current="'+esc(x.expectedSpeedMbps??"")+'">'+
+          (expected?'Edit expected':'Set expected speed')+
+        '</button>'+
+      '</div>';
     return '<tr>'+
       '<td><b>'+esc(x.deviceName)+'</b><div class="muted">Port '+esc(x.portIdx)+(x.portName?" · "+esc(x.portName):"")+'</div></td>'+
       '<td><b>'+esc(endpoint)+'</b><div class="muted">'+esc(endpointDetail||x.endpointType||"No mapped endpoint")+'</div></td>'+
@@ -834,7 +842,7 @@ function renderWiredPortTable(){
       '<td>'+errors+'</td>'+
       '<td>'+esc(profile)+'</td>'+
       '<td>'+esc(changes)+(x.lastEvent?'<div class="muted">'+esc(fmtShortDate(x.lastEvent))+'</div>':"")+'</td>'+
-      '<td><span class="status-tag '+wiredStatusClass(x.status)+'">'+esc(x.status)+'</span><div class="muted wired-reason">'+esc(x.reason)+'</div></td>'+
+      '<td><span class="status-tag '+wiredStatusClass(x.status)+'">'+esc(x.status)+'</span><div class="muted wired-reason">'+esc(x.reason)+'</div>'+expectationControls+'</td>'+
     '</tr>';
   }).join(""):'<tr><td colspan="10"><div class="empty">No ports match the selected filters.</div></td></tr>';
 }
@@ -868,6 +876,57 @@ async function loadWiredAudit(){
     if(notice)notice.innerHTML='<b class="bad">Wired audit failed</b><br><span class="muted">'+esc(e.message||e)+'</span>';
   }
 }
+
+async function setExpectedWiredSpeed(button){
+  const scope=button.dataset.scope||"";
+  const name=button.dataset.name||"Wired endpoint";
+  const current=button.dataset.current||"";
+  if(!scope){
+    alert("This port does not have a stable endpoint/port key yet.");
+    return;
+  }
+  const value=prompt(
+    "Expected Ethernet link speed for "+name+" in Mbps.\nAllowed: 10, 100, 1000, 2500, 5000, 10000, 25000, 40000, 100000.\nLeave blank to remove an existing expectation.",
+    current
+  );
+  if(value===null)return;
+  if(value.trim()===""){
+    if(!current)return;
+    await fetch("/api/wired-expectations/delete",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({scopeKey:scope})
+    });
+    await loadWiredAudit();
+    return;
+  }
+  const speed=Number(value);
+  const allowed=[10,100,1000,2500,5000,10000,25000,40000,100000];
+  if(!allowed.includes(speed)){
+    alert("Choose one of the allowed expected speeds.");
+    return;
+  }
+  const r=await fetch("/api/wired-expectations",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      scopeKey:scope,
+      endpointName:name,
+      expectedSpeedMbps:speed
+    })
+  });
+  const d=await r.json();
+  if(!d.ok){
+    alert(d.error||"Unable to save expected link speed.");
+    return;
+  }
+  await loadWiredAudit();
+}
+
+document.addEventListener("click",e=>{
+  const btn=e.target.closest(".set-expected-speed-btn");
+  if(btn)setExpectedWiredSpeed(btn);
+});
 
 ["wiredSearch","wiredSwitchFilter","wiredStatusFilter","wiredActiveOnly"].forEach(id=>{
   const el=document.getElementById(id);
