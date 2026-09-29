@@ -25,7 +25,7 @@ from .rf_environment import parse_rf_environment
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.21.0"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.0"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -717,6 +717,7 @@ def _build_support_context():
         "healthHistory24h":db.health_history(24),
         "roaming24h":db.roaming_summary(24),
         "recentLog":db.recent_logs(200),
+        "aiProposals":db.list_ai_proposals(50),
         "ai":_ai_status(include_history=False),
     }
 
