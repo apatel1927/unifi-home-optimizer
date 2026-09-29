@@ -825,3 +825,10 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
   .export-actions{flex-direction:column}
   .export-actions button{width:100%}
 }
+
+
+/* v0.21.0 traffic diagnostics + RF retest */
+.traffic-diagnostics-panel{margin-bottom:16px}
+.compact-head{margin:0 0 10px}
+.diagnostic-keys{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px;line-height:1.45;overflow-wrap:anywhere}
+.retest-cancelled-btn{white-space:nowrap}
