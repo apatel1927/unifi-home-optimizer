@@ -191,12 +191,15 @@ def _build_endpoint_maps(snapshot, classic_clients, classic_devices):
     return clients,children
 
 
-def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, event_summary=None, recent_events=None, counter_summary=None):
+def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, event_summary=None, recent_events=None, counter_summary=None, expectations=None):
     classic_devices=classic_devices or []
     classic_clients=classic_clients or []
     event_summary=event_summary or {}
     recent_events=recent_events or []
     counter_summary=counter_summary or {}
+    expectations=expectations or {}
+    if isinstance(expectations,list):
+        expectations={str(x.get("scope_key")):x for x in expectations if x.get("scope_key")}
 
     devices=snapshot.get("devices") or []
     official_by_mac={_norm_mac(d.get("macAddress") or d.get("mac")):d for d in devices if d.get("macAddress") or d.get("mac")}
@@ -240,6 +243,9 @@ def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, even
             cumulative_drops=sum(x or 0 for x in (rx_drops,tx_drops))
 
             key=f"{device.get('id')}:{idx}"
+            expectation_scope=(_norm_mac(endpoint.get("mac")) if endpoint and endpoint.get("mac") else "PORT:"+key)
+            expectation=expectations.get(expectation_scope) or {}
+            expected_speed=_num(expectation.get("expected_speed_mbps"))
             events=event_summary.get(key) or {}
             counters_now=counter_summary.get(key) or {}
             error_delta=int(counters_now.get("errorDelta") or 0)
@@ -271,6 +277,16 @@ def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, even
                 elif error_delta>=100 or drop_delta>=500:
                     status="REVIEW"
                     reason=f"Port added {error_delta} error(s) and {drop_delta} drop(s) since the last monitor sample."
+                elif expected_speed is not None and speed is not None:
+                    if speed >= expected_speed:
+                        status="NORMAL"
+                        reason=f"Link matches the acknowledged expected speed of {expected_speed:g} Mbps."
+                    elif speed <= expected_speed/2:
+                        status="WARNING"
+                        reason=f"Link is {speed:g} Mbps, below the acknowledged expected speed of {expected_speed:g} Mbps."
+                    else:
+                        status="REVIEW"
+                        reason=f"Link is {speed:g} Mbps, below the acknowledged expected speed of {expected_speed:g} Mbps."
                 elif speed is not None and speed<=100:
                     if endpoint and endpoint.get("type")=="UNIFI_DEVICE":
                         status="WARNING"
@@ -334,6 +350,9 @@ def build_wired_audit(snapshot, classic_devices=None, classic_clients=None, even
                 "endpointModel":endpoint.get("model") if endpoint else None,
                 "endpointNetwork":endpoint.get("network") if endpoint else None,
                 "endpointVlan":endpoint.get("vlan") if endpoint else None,
+                "expectationScopeKey":expectation_scope,
+                "expectedSpeedMbps":expected_speed,
+                "expectationNote":expectation.get("note"),
                 "status":status,
                 "reason":reason,
                 "stateChanges24h":state_changes,
