@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 from datetime import datetime, timezone, timedelta
@@ -263,6 +264,55 @@ class Database:
             ON wired_port_events(ts);
         CREATE INDEX IF NOT EXISTS idx_wired_port_events_device_port_ts
             ON wired_port_events(device_id,port_idx,ts);
+        CREATE TABLE IF NOT EXISTS rf_environment_samples(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            ap_mac TEXT NOT NULL,
+            ap_name TEXT,
+            band REAL NOT NULL,
+            radio_name TEXT,
+            channel INTEGER,
+            width_mhz INTEGER,
+            channel_utilization_pct REAL,
+            self_rx_pct REAL,
+            self_tx_pct REAL,
+            external_busy_pct REAL,
+            noise_dbm REAL,
+            tx_power_dbm REAL,
+            client_count INTEGER,
+            tx_retries_pct REAL,
+            neighbor_count INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_rf_environment_ts
+            ON rf_environment_samples(ts);
+        CREATE INDEX IF NOT EXISTS idx_rf_environment_ap_band_ts
+            ON rf_environment_samples(ap_mac,band,ts);
+
+        CREATE TABLE IF NOT EXISTS wired_expectations(
+            scope_key TEXT PRIMARY KEY,
+            endpoint_name TEXT,
+            expected_speed_mbps INTEGER NOT NULL,
+            note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ai_proposals(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            reason TEXT,
+            risk TEXT,
+            params_json TEXT,
+            rollback TEXT,
+            execution_result TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_proposals_status
+            ON ai_proposals(status);
+
         CREATE TABLE IF NOT EXISTS ai_reports(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -809,6 +859,169 @@ class Database:
         c.close()
         return [dict(r) for r in rows]
 
+    def record_rf_environment(self, rows):
+        if not rows:
+            return
+        now=datetime.now(timezone.utc).isoformat()
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
+        c=self.connect()
+        for r in rows:
+            mac=str(r.get("apMac") or "").lower()
+            band=r.get("band")
+            if not mac or band is None:
+                continue
+            c.execute("""
+                INSERT INTO rf_environment_samples(
+                    ts,ap_mac,ap_name,band,radio_name,channel,width_mhz,
+                    channel_utilization_pct,self_rx_pct,self_tx_pct,external_busy_pct,
+                    noise_dbm,tx_power_dbm,client_count,tx_retries_pct,neighbor_count
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,(
+                now,mac,r.get("apName"),float(band),r.get("radioName"),
+                r.get("channel"),r.get("widthMHz"),r.get("channelUtilizationPct"),
+                r.get("selfRxPct"),r.get("selfTxPct"),r.get("externalBusyPct"),
+                r.get("noiseDbm"),r.get("txPowerDbm"),r.get("clientCount"),
+                r.get("txRetriesPct"),r.get("neighborCount")
+            ))
+        c.execute("DELETE FROM rf_environment_samples WHERE ts < ?",(cutoff,))
+        c.commit()
+        c.close()
+
+    def rf_environment_summary(self, hours=24, limit=1000):
+        cutoff=(datetime.now(timezone.utc)-timedelta(hours=hours)).isoformat()
+        c=self.connect()
+        latest=c.execute("""
+            SELECT r.*
+            FROM rf_environment_samples r
+            JOIN (
+                SELECT ap_mac,band,MAX(id) AS max_id
+                FROM rf_environment_samples
+                GROUP BY ap_mac,band
+            ) x ON x.max_id=r.id
+            ORDER BY r.ap_name COLLATE NOCASE,r.band
+        """).fetchall()
+        history=c.execute("""
+            SELECT *
+            FROM rf_environment_samples
+            WHERE ts>=?
+            ORDER BY id DESC
+            LIMIT ?
+        """,(cutoff,limit)).fetchall()
+        avg_rows=c.execute("""
+            SELECT ap_mac,MAX(ap_name) AS ap_name,band,
+                   AVG(channel_utilization_pct) AS avg_utilization_pct,
+                   AVG(external_busy_pct) AS avg_external_busy_pct,
+                   AVG(noise_dbm) AS avg_noise_dbm,
+                   AVG(tx_retries_pct) AS avg_tx_retries_pct,
+                   MAX(neighbor_count) AS max_neighbor_count,
+                   COUNT(*) AS sample_count
+            FROM rf_environment_samples
+            WHERE ts>=?
+            GROUP BY ap_mac,band
+            ORDER BY ap_name COLLATE NOCASE,band
+        """,(cutoff,)).fetchall()
+        c.close()
+        return {
+            "hours":hours,
+            "latest":[dict(r) for r in latest],
+            "averages":[dict(r) for r in avg_rows],
+            "history":list(reversed([dict(r) for r in history])),
+        }
+
+    def set_wired_expectation(self, scope_key, endpoint_name, expected_speed_mbps, note=None):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        c.execute("""
+            INSERT INTO wired_expectations(
+                scope_key,endpoint_name,expected_speed_mbps,note,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?)
+            ON CONFLICT(scope_key) DO UPDATE SET
+                endpoint_name=excluded.endpoint_name,
+                expected_speed_mbps=excluded.expected_speed_mbps,
+                note=excluded.note,
+                updated_at=excluded.updated_at
+        """,(scope_key,endpoint_name,int(expected_speed_mbps),note,now,now))
+        c.commit()
+        row=c.execute("SELECT * FROM wired_expectations WHERE scope_key=?",(scope_key,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
+    def delete_wired_expectation(self, scope_key):
+        c=self.connect()
+        c.execute("DELETE FROM wired_expectations WHERE scope_key=?",(scope_key,))
+        changed=c.total_changes
+        c.commit()
+        c.close()
+        return bool(changed)
+
+    def wired_expectations(self):
+        c=self.connect()
+        rows=c.execute("SELECT * FROM wired_expectations ORDER BY endpoint_name COLLATE NOCASE,scope_key").fetchall()
+        c.close()
+        return [dict(r) for r in rows]
+
+    def replace_pending_ai_proposals(self, proposals):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        c.execute("DELETE FROM ai_proposals WHERE status='PENDING'")
+        for p in proposals or []:
+            c.execute("""
+                INSERT INTO ai_proposals(
+                    created_at,updated_at,status,action_type,title,reason,risk,
+                    params_json,rollback,execution_result
+                ) VALUES(?,?,'PENDING',?,?,?,?,?,?,NULL)
+            """,(
+                now,now,p.get("actionType"),p.get("title"),p.get("reason"),
+                p.get("risk"),json.dumps(p.get("params") or {},separators=(",",":")),
+                p.get("rollback")
+            ))
+        c.commit()
+        c.close()
+        return self.list_ai_proposals()
+
+    def list_ai_proposals(self, limit=50):
+        c=self.connect()
+        rows=c.execute("""
+            SELECT * FROM ai_proposals ORDER BY id DESC LIMIT ?
+        """,(limit,)).fetchall()
+        c.close()
+        out=[]
+        for r in rows:
+            d=dict(r)
+            try:
+                d["params"]=json.loads(d.pop("params_json") or "{}")
+            except Exception:
+                d["params"]={}
+                d.pop("params_json",None)
+            out.append(d)
+        return out
+
+    def get_ai_proposal(self, proposal_id):
+        c=self.connect()
+        row=c.execute("SELECT * FROM ai_proposals WHERE id=?",(proposal_id,)).fetchone()
+        c.close()
+        if not row:
+            return None
+        d=dict(row)
+        try:
+            d["params"]=json.loads(d.pop("params_json") or "{}")
+        except Exception:
+            d["params"]={}
+            d.pop("params_json",None)
+        return d
+
+    def update_ai_proposal(self, proposal_id, status, execution_result=None):
+        now=datetime.now(timezone.utc).isoformat()
+        c=self.connect()
+        c.execute("""
+            UPDATE ai_proposals
+            SET status=?,execution_result=?,updated_at=?
+            WHERE id=?
+        """,(status,execution_result,now,proposal_id))
+        c.commit()
+        c.close()
+        return self.get_ai_proposal(proposal_id)
+
     def record_ai_report(self, trigger, model, status, summary=None, error=None):
         now=datetime.now(timezone.utc).isoformat()
         cutoff=(datetime.now(timezone.utc)-timedelta(days=self.retention_days)).isoformat()
@@ -833,7 +1046,7 @@ class Database:
 
     def database_stats(self):
         c=self.connect()
-        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples","wan_ping_samples","wan_dns_samples","wired_port_state","wired_port_events","ai_reports"]
+        tables=["ap_history","client_state","roam_events","internet_samples","optimization_log","optimization_tests","health_history","radio_config_state","radio_config_changes","speedtest_results","traffic_client_samples","traffic_dpi_samples","wan_ping_samples","wan_dns_samples","wired_port_state","wired_port_events","ai_reports","rf_environment_samples","wired_expectations","ai_proposals"]
         counts={}
         for table in tables:
             try:
