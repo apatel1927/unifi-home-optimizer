@@ -617,6 +617,12 @@ class Database:
         c.close()
         return dict(row) if row else None
 
+    def get_optimization_test(self, test_id):
+        c=self.connect()
+        row=c.execute("SELECT * FROM optimization_tests WHERE id=?",(test_id,)).fetchone()
+        c.close()
+        return dict(row) if row else None
+
     def list_optimization_tests(self, limit=100):
         c=self.connect()
         rows=c.execute("""
