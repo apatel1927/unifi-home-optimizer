@@ -2,7 +2,14 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.20.3
+## v0.21.0
+
+- Traffic page now includes a manual Sample now control and safe collector diagnostics
+- Traffic diagnostics report station/DPI structure and counter-field coverage without exposing credentials or packet contents
+- Per-client traffic collection supports additional UniFi counter field names and falls back to station DPI cumulative counters when /stat/sta omits byte totals
+- Cancelled RF A/B/A tests now have a Retest cancelled change action that creates a fresh test instead of leaving the old cancelled record as a dead end
+- Retesting refuses to create a misleading no-op when the AP is still on the cancelled B setting and tells the user to restore A first
+- Channel Planner now explains the RF revalidation policy: one variable at a time, fresh baseline, B observation, rollback verification, and prior confirmed-worse results retained as evidence
 
 - AI wording now distinguishes validated private/classic Auto RF from the separate official API limitations
 - REVIEW-only findings such as DHCP guarding, disabled policies, client isolation and MLO are no longer promoted into enable/disable recommendations without stronger evidence
