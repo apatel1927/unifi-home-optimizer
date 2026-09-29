@@ -1434,6 +1434,52 @@ function renderTraffic(d){
   }
 }
 
+async function loadTrafficDiagnostics(){
+  const panel=document.getElementById("trafficDiagnosticsPanel");
+  const content=document.getElementById("trafficDiagnosticsContent");
+  if(panel)panel.style.display="block";
+  if(content)content.innerHTML='<div><span>Status</span><b>Reading collector structure…</b></div>';
+  try{
+    const r=await fetch("/api/traffic/diagnostics",{cache:"no-store"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Unable to load diagnostics");
+    const coverage=Object.entries(d.counterCoverage||{}).map(([k,v])=>k+" "+v.nonzero+"/"+v.present+" nonzero").join(" · ")||"No supported counter fields found";
+    const stationKeys=(d.stationKeys||[]).join(", ")||"None";
+    const dpiKeys=(d.dpiKeys||[]).join(", ")||"None";
+    if(content)content.innerHTML=
+      '<div><span>Classic/private API</span><b>'+(d.privateConfigured?"Configured":"Not configured")+'</b></div>'+
+      '<div><span>Stations returned</span><b>'+esc(d.stationCount||0)+'</b></div>'+
+      '<div><span>Counter coverage</span><b>'+esc(coverage)+'</b></div>'+
+      '<div><span>Stored clients / 24h</span><b>'+esc(d.databaseClientCount||0)+'</b></div>'+
+      '<div><span>Stored traffic / 24h</span><b>RX '+esc(bytes(d.databaseRxBytes||0))+' · TX '+esc(bytes(d.databaseTxBytes||0))+'</b></div>'+
+      '<div><span>DPI tables</span><b>'+esc(d.dpiTableCount||0)+' · apps '+esc(d.dpiByAppCount||0)+' · categories '+esc(d.dpiByCategoryCount||0)+'</b></div>'+
+      '<div><span>Station keys</span><b class="diagnostic-keys">'+esc(stationKeys)+'</b></div>'+
+      '<div><span>DPI keys</span><b class="diagnostic-keys">'+esc(dpiKeys)+'</b></div>'+
+      '<div><span>Last sample</span><b>'+esc(d.lastSampleAt?fmtDateTime(d.lastSampleAt):"Never")+'</b></div>'+
+      '<div><span>Last error</span><b>'+esc(d.lastError||d.dpiError||"None")+'</b></div>';
+  }catch(e){
+    if(content)content.innerHTML='<div><span>Diagnostics error</span><b class="bad">'+esc(e.message||e)+'</b></div>';
+  }
+}
+
+async function sampleTrafficNow(){
+  const btn=document.getElementById("trafficSampleNowBtn");
+  const notice=document.getElementById("trafficNotice");
+  if(btn){btn.disabled=true;btn.textContent="Sampling…";}
+  try{
+    const r=await fetch("/api/traffic/sample",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Traffic sample failed");
+    if(notice)notice.innerHTML='<b class="good">Manual traffic sample completed</b><br><span class="muted">Historical byte usage needs two counter samples with traffic between them. Run another sample after a few minutes of network activity if totals are still zero.</span>';
+    await loadTraffic();
+    if(document.getElementById("trafficDiagnosticsPanel")?.style.display!=="none")await loadTrafficDiagnostics();
+  }catch(e){
+    if(notice)notice.innerHTML='<b class="warn">Traffic sample failed</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Sample now";}
+  }
+}
+
 async function loadTraffic(){
   const hours=Number(document.getElementById("trafficRange")?.value||24);
   try{
@@ -1447,6 +1493,12 @@ async function loadTraffic(){
 }
 
 document.getElementById("trafficRange")?.addEventListener("change",loadTraffic);
+document.getElementById("trafficSampleNowBtn")?.addEventListener("click",sampleTrafficNow);
+document.getElementById("trafficDiagnosticsBtn")?.addEventListener("click",loadTrafficDiagnostics);
+document.getElementById("trafficDiagnosticsCloseBtn")?.addEventListener("click",()=>{
+  const panel=document.getElementById("trafficDiagnosticsPanel");
+  if(panel)panel.style.display="none";
+});
 ["trafficClientSearch","trafficApFilter","trafficVlanFilter","trafficNetworkFilter","trafficClientSort"].forEach(id=>{
   const el=document.getElementById(id);
   if(!el)return;
@@ -1897,6 +1949,8 @@ function renderOptimizationTests(items){
       controls='<span class="muted">Restore original '+esc(original)+'. The optimizer will detect it automatically.</span> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel test</button>';
     }else if(t.status==="ROLLBACK_MONITORING"){
       controls='<span class="muted">Rollback verification is running automatically.</span> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel test</button>';
+    }else if(t.status==="CANCELLED"){
+      controls='<button class="retest-cancelled-btn" data-id="'+t.id+'">Retest cancelled change</button> <span class="muted">Creates a fresh baseline and a new A/B/A test using the same proposed B setting.</span>';
     }
 
     if(pt){
@@ -1939,6 +1993,27 @@ function renderOptimizationTests(items){
   });
 }
 
+async function retestCancelledOptimizationTest(testId){
+  const btn=document.querySelector('.retest-cancelled-btn[data-id="'+testId+'"]');
+  if(btn){btn.disabled=true;btn.textContent="Creating retest…";}
+  try{
+    const r=await fetch("/api/optimization-tests/"+testId+"/retest",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok){
+      let message=d.error||"Unable to create retest.";
+      if(d.needsRestore&&d.original){
+        message+="\n\nRestore the radio to "+d.original.channel+" / "+d.original.widthMHz+" MHz first, allow a fresh baseline to collect, then retest.";
+      }
+      alert(message);
+      return;
+    }
+    await loadOptimizationTests();
+    await loadChannelPlan();
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Retest cancelled change";}
+  }
+}
+
 async function loadOptimizationTests(){
   const r=await fetch("/api/optimization-tests",{cache:"no-store"});
   const d=await r.json();
@@ -1958,6 +2033,11 @@ document.addEventListener("click",async e=>{
     await fetch("/api/optimization-tests/"+cancel.dataset.id+"/cancel",{method:"POST"});
     await loadOptimizationTests();
     await loadChannelPlan();
+    return;
+  }
+  const retest=e.target.closest(".retest-cancelled-btn");
+  if(retest){
+    await retestCancelledOptimizationTest(Number(retest.dataset.id));
   }
 });
 
