@@ -25,7 +25,7 @@ from .rf_environment import parse_rf_environment
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.1"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.2"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -685,7 +685,18 @@ def _build_support_context():
     speed["history"]=db.speedtest_history(30,200)
     wan=db.wan_quality_summary(24)
     rf_summary=db.rf_environment_summary(24)
-    rf_summary["neighbors"]=(rf_environment_live or {}).get("neighbors") or []
+    live_rf=rf_environment_live or {}
+    rf_neighbors=[]
+    for neighbor in live_rf.get("neighbors") or []:
+        item=dict(neighbor)
+        # Neighbor RSSI/noise semantics are still controller-version-sensitive.
+        # Keep AI proposals count/topology based until those fields are independently validated.
+        item.pop("rssi",None)
+        item.pop("noiseDbm",None)
+        rf_neighbors.append(item)
+    rf_summary["neighbors"]=rf_neighbors
+    rf_summary["neighborRssiTrusted"]=False
+    rf_summary["dataQuality"]=live_rf.get("dataQuality") or {}
     rf_summary["lastSampleAt"]=rf_environment_last_sample_at
     rf_summary["lastError"]=rf_environment_last_error
 
@@ -1739,6 +1750,8 @@ def rf_environment_data():
         "liveRadios":live.get("radios") or [],
         "neighbors":live.get("neighbors") or [],
         "diagnostics":live.get("diagnostics") or [],
+        "dataQuality":live.get("dataQuality") or {},
+        "neighborRssiValidated":bool((live.get("dataQuality") or {}).get("neighborRssiValidated")),
         "privateConfigured":private_api.configured,
         "sampleIntervalSeconds":rf_environment_sample_seconds,
         "lastSampleAt":rf_environment_last_sample_at,
@@ -1757,6 +1770,8 @@ def rf_environment_sample_now():
         "ok":True,
         "radios":parsed.get("radios") or [],
         "neighbors":parsed.get("neighbors") or [],
+        "dataQuality":parsed.get("dataQuality") or {},
+        "neighborRssiValidated":bool((parsed.get("dataQuality") or {}).get("neighborRssiValidated")),
         "lastSampleAt":rf_environment_last_sample_at,
         "lastError":rf_environment_last_error,
     })
@@ -2103,13 +2118,27 @@ def optimization_test_retest(test_id):
 
     proposed_channel=previous.get("proposed_channel")
     proposed_width=previous.get("proposed_width_mhz")
+    original_channel=previous.get("original_channel")
+    original_width=previous.get("original_width_mhz")
     if live.get("channel")==proposed_channel and live.get("widthMHz")==proposed_width:
         return jsonify({
             "ok":False,
             "needsRestore":True,
-            "error":"The AP is still on the cancelled test setting. Restore the original setting before starting a clean retest.",
+            "liveState":"B_STILL_ACTIVE",
+            "error":"The AP is still on the cancelled B setting. Restore the original A setting before starting a clean retest.",
             "current":{"channel":live.get("channel"),"widthMHz":live.get("widthMHz")},
-            "original":{"channel":previous.get("original_channel"),"widthMHz":previous.get("original_width_mhz")}
+            "proposed":{"channel":proposed_channel,"widthMHz":proposed_width},
+            "original":{"channel":original_channel,"widthMHz":original_width}
+        }),409
+    if live.get("channel")!=original_channel or live.get("widthMHz")!=original_width:
+        return jsonify({
+            "ok":False,
+            "needsRestore":True,
+            "liveState":"NEITHER_A_NOR_B",
+            "error":"The live radio no longer matches the cancelled test's original A setting. Restore A before creating a clean retest.",
+            "current":{"channel":live.get("channel"),"widthMHz":live.get("widthMHz")},
+            "proposed":{"channel":proposed_channel,"widthMHz":proposed_width},
+            "original":{"channel":original_channel,"widthMHz":original_width}
         }),409
 
     now=datetime.now(timezone.utc)
