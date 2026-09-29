@@ -2,7 +2,18 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.21.0
+## v0.22.0
+
+- Passive RF Environment page collects read-only classic UniFi radio telemetry every 5 minutes when available
+- RF telemetry includes current-channel utilization, self RX/TX airtime, estimated external busy time, noise floor, TX power, retry rate, client count, and neighboring BSS observations exposed by the controller
+- Channel Planner cards now display passive RF evidence alongside retries and own-AP overlap; passive current-channel data is treated as supporting evidence, not proof that an unscanned candidate is cleaner
+- Active/off-channel RF scanning remains disabled until the exact controller/AP command is separately verified because undocumented scans may interrupt clients
+- Wired / Switches now supports persistent expected-link-speed acknowledgments for known 100 Mbps / 1G / 2.5G / 5G / 10G / faster endpoints
+- Expected-speed acknowledgments follow the endpoint MAC when known, or the switch port when no endpoint identity is available
+- AI Approval Queue can generate constrained proposals and requires explicit user approval before any whitelisted action executes
+- Executable AI actions are limited to creating a validated RF A/B/A test or running the existing narrow Auto Optimize path; firewall/VLAN/DHCP/MLO/client-isolation items remain review-only
+- Approved RF proposals are revalidated against the current Channel Planner and stored RF history before a test is created
+- RF environment data and the AI approval queue are included in sanitized support exports
 
 - Traffic page now includes a manual Sample now control and safe collector diagnostics
 - Traffic diagnostics report station/DPI structure and counter-field coverage without exposing credentials or packet contents
@@ -259,3 +270,23 @@ OPENAI_MODEL=gpt-5.6-luna
 ```
 
 The API key is read from the container environment, is never returned by the app and is excluded from support exports. The AI advisor can run manually or on a 1/3/6/12/24-hour schedule. AI is advisory-only: it summarizes current health, proposes safe automations and identifies approval-required changes. Existing deterministic automation remains responsible for actual configuration changes.
+
+
+## RF environment
+
+The RF Environment page uses read-only classic UniFi telemetry because the supplied official Network Integration API documentation exposes device/radio statistics but does not document a neighboring-network or active RF scan command. When the controller exposes `radio_table_stats`, the app records current-channel utilization, self RX/TX airtime, external busy time, noise, TX power, retries and client counts. It also attempts a read-only neighboring/rogue AP inventory through the classic API.
+
+These values are used as supporting evidence in Channel Planner and AI analysis. They describe the current RF environment; they do not prove that an unscanned candidate channel is better. Active spectrum scanning stays disabled until a controller-specific command is separately verified.
+
+## Expected wired link speeds
+
+On Wired / Switches, a confirmed endpoint can be assigned an expected negotiated speed. Matching links stop lowering the wired score, but an acknowledged endpoint can still warn if it drops below the expected speed, accumulates new errors/drops, flaps or develops a PoE fault.
+
+## AI approval queue
+
+The AI Approval Queue is deliberately constrained. AI can propose:
+- `RF_ABA_TEST` for a current, still-valid Channel Planner change
+- `AUTO_OPTIMIZE_RUN` only when an eligible STANDARD SSID actually needs Band Steering or BSS Transition enabled
+- `REVIEW_SETTING` for everything else
+
+Nothing executes until the user presses Approve. Review-only proposals never change the network. RF approvals are revalidated against the live radio state, current planner recommendation, active-test state and stored RF history before creating a fresh A/B/A test.
