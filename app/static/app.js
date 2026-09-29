@@ -1923,7 +1923,7 @@ function rfPct(v){
 function rfDbm(v){
   return v==null?"—":Number(v).toFixed(0)+" dBm";
 }
-function rfNeighborSummary(neighbors){
+function rfNeighborSummary(neighbors,rssiTrusted=false){
   const dedup=new Map();
   for(const n of neighbors||[]){
     const band=n.band==null?"?":String(n.band);
@@ -1942,18 +1942,21 @@ function rfNeighborSummary(neighbors){
     const band=n.band==null?"?":String(n.band);
     const channel=n.channel==null?"?":String(n.channel);
     const key=band+"|"+channel;
-    if(!groups.has(key))groups.set(key,{band,channel,count:0,strongest:null,strongestSsid:null});
+    if(!groups.has(key))groups.set(key,{band,channel,count:0,strongest:null,strongestSsid:null,strongestNormalized:false});
     const g=groups.get(key);
     g.count++;
     if(n.rssi!=null && (g.strongest==null || n.rssi>g.strongest)){
       g.strongest=n.rssi;
       g.strongestSsid=n.ssid||"Hidden / unknown";
+      g.strongestNormalized=!!n.rssiNormalizedPositiveMagnitude;
     }
   }
 
   const classify=g=>{
-    if((g.strongest!=null&&g.strongest>=-65)||g.count>=15)return {label:"HIGH",cls:"high"};
-    if((g.strongest!=null&&g.strongest>=-75)||g.count>=8)return {label:"MODERATE",cls:"moderate"};
+    if(g.count>=15)return {label:"HIGH",cls:"high"};
+    if(g.count>=8)return {label:"MODERATE",cls:"moderate"};
+    if(rssiTrusted&&g.strongest!=null&&g.strongest>=-65)return {label:"HIGH",cls:"high"};
+    if(rssiTrusted&&g.strongest!=null&&g.strongest>=-75)return {label:"MODERATE",cls:"moderate"};
     return {label:"LOW",cls:"low"};
   };
 
@@ -1961,14 +1964,16 @@ function rfNeighborSummary(neighbors){
     const bandOrder=v=>v==="2.4"?0:v==="5"?1:v==="6"?2:9;
     return bandOrder(a.band)-bandOrder(b.band) || Number(a.channel||999)-Number(b.channel||999);
   });
-  return {rows,uniqueCount:dedup.size,classify};
+  return {rows,uniqueCount:dedup.size,classify,rssiTrusted};
 }
 
 function renderRfEnvironment(d){
   rfEnvironmentData=d;
   const rows=(d.liveRadios&&d.liveRadios.length?d.liveRadios:d.latest)||[];
   const neighbors=d.neighbors||[];
-  const neighborSummary=rfNeighborSummary(neighbors);
+  const neighborRssiTrusted=!!d.neighborRssiValidated;
+  const neighborSummary=rfNeighborSummary(neighbors,neighborRssiTrusted);
+  const historical=d.historical||[];
   const set=(id,val)=>{const el=document.getElementById(id);if(el)el.textContent=val};
 
   set("rfRadioCount",rows.length);
@@ -1989,6 +1994,18 @@ function renderRfEnvironment(d){
   set("rfNoiseFloor",quiet?rfDbm(noiseValue(quiet)):"—");
   set("rfLastSample",d.lastSampleAt?fmtShortDate(d.lastSampleAt):"Learning…");
 
+  const rangeLabels={1:"Last hour",24:"Last 24 hours",168:"Last 7 days",720:"Last 30 days"};
+  set("rfHistoricalRangeLabel",(rangeLabels[Number(d.hours)]||("Last "+Number(d.hours||24)+" hours"))+" stored-sample summary");
+  set("rfHistoricalSamples",historical.reduce((sum,x)=>sum+Number(x.sampleCount||0),0));
+  const histAvg=historical.filter(x=>x.avgUtilizationPct!=null);
+  const histP95=historical.filter(x=>x.p95UtilizationPct!=null);
+  const highAvg=histAvg.length?[...histAvg].sort((a,b)=>Number(b.avgUtilizationPct)-Number(a.avgUtilizationPct))[0]:null;
+  const highP95=histP95.length?[...histP95].sort((a,b)=>Number(b.p95UtilizationPct)-Number(a.p95UtilizationPct))[0]:null;
+  set("rfHistoricalAvg",highAvg?rfPct(highAvg.avgUtilizationPct):"—");
+  set("rfHistoricalAvgDetail",highAvg?(highAvg.apName||"AP")+" · "+highAvg.band+" GHz":"No stored samples");
+  set("rfHistoricalP95",highP95?rfPct(highP95.p95UtilizationPct):"—");
+  set("rfHistoricalP95Detail",highP95?(highP95.apName||"AP")+" · "+highP95.band+" GHz":"No stored samples");
+
   const notice=document.getElementById("rfEnvironmentNotice");
   if(notice){
     if(!d.privateConfigured){
@@ -1996,7 +2013,10 @@ function renderRfEnvironment(d){
     }else if(d.lastError&&!rows.length){
       notice.innerHTML='<b class="warn">RF telemetry is not available yet</b><br><span class="muted">'+esc(d.lastError)+'</span>';
     }else{
-      notice.innerHTML='<b class="good">Passive RF monitoring active</b><br><span class="muted">Read-only sample every '+Math.round(Number(d.sampleIntervalSeconds||300)/60)+' minutes. Neighbor observations are shown only when the controller exposes them. No active/off-channel scan is being triggered.</span>';
+      const trustNote=neighborRssiTrusted
+        ?" Neighbor RSSI semantics are validated for pressure scoring."
+        :" Neighbor RSSI is normalized for display when needed but excluded from pressure/channel decisions until the controller field semantics are independently validated.";
+      notice.innerHTML='<b class="good">Passive RF monitoring active</b><br><span class="muted">Read-only sample every '+Math.round(Number(d.sampleIntervalSeconds||300)/60)+' minutes. Neighbor observations are shown only when the controller exposes them. No active/off-channel scan is being triggered.'+esc(trustNote)+'</span>';
     }
   }
 
@@ -2030,17 +2050,35 @@ function renderRfEnvironment(d){
     }).join(""):'<tr><td colspan="11"><div class="empty">No passive radio statistics have been exposed yet. Use Refresh passive RF and inspect diagnostics.</div></td></tr>';
   }
 
+  const histTable=document.getElementById("rfHistoricalTable");
+  if(histTable){
+    histTable.innerHTML=historical.length?historical.map(x=>
+      '<tr>'+
+        '<td><b>'+esc(x.apName||"—")+'</b></td>'+
+        '<td>'+esc(x.band==null?"—":x.band+" GHz")+'</td>'+
+        '<td>'+esc(x.sampleCount??0)+'</td>'+
+        '<td>'+esc(rfPct(x.avgUtilizationPct))+'</td>'+
+        '<td>'+esc(rfPct(x.medianUtilizationPct))+'</td>'+
+        '<td>'+esc(rfPct(x.p95UtilizationPct))+'</td>'+
+        '<td>'+esc(rfPct(x.maxUtilizationPct))+'</td>'+
+        '<td>'+esc(rfPct(x.avgExternalBusyPct))+'</td>'+
+        '<td class="'+retryClass(x.avgRetriesPct)+'">'+esc(x.avgRetriesPct==null?"—":Number(x.avgRetriesPct).toFixed(1)+"%")+'</td>'+
+        '<td>'+esc(x.maxClientCount??"—")+'</td>'+
+      '</tr>'
+    ).join(""):'<tr><td colspan="10"><div class="empty">No stored RF samples exist in this selected range yet.</div></td></tr>';
+  }
+
   const summaryTable=document.getElementById("rfNeighborChannelSummary");
   if(summaryTable){
     summaryTable.innerHTML=neighborSummary.rows.length?neighborSummary.rows.map(g=>{
       const pressure=neighborSummary.classify(g);
-      const strongest=g.strongest==null?"—":rfDbm(g.strongest)+" · "+(g.strongestSsid||"");
+      const strongest=g.strongest==null?"—":rfDbm(g.strongest)+" · "+(g.strongestSsid||"")+(g.strongestNormalized?" · normalized sign":"");
       return '<tr>'+
         '<td>'+esc(g.band==="?"?"Unknown":g.band+" GHz")+'</td>'+
         '<td><b>'+esc(g.channel)+'</b></td>'+
         '<td>'+esc(g.count)+'</td>'+
         '<td>'+esc(strongest)+'</td>'+
-        '<td><span class="rf-pressure '+pressure.cls+'"><span class="rf-pressure-dot"></span>'+pressure.label+'</span></td>'+
+        '<td><span class="rf-pressure '+pressure.cls+'"><span class="rf-pressure-dot"></span>'+pressure.label+'</span><div class="muted">'+(neighborRssiTrusted?"count + RSSI":"count only")+'</div></td>'+
       '</tr>';
     }).join(""):'<tr><td colspan="5"><div class="empty">No neighboring BSS observations are available yet.</div></td></tr>';
   }
@@ -2059,9 +2097,15 @@ function renderRfEnvironment(d){
   const diag=document.getElementById("rfDiagnostics");
   if(diag){
     const ds=d.diagnostics||[];
-    diag.innerHTML=ds.length?ds.map(x=>
+    const quality=d.dataQuality||{};
+    const discovered=ds.length?ds.map(x=>
       '<div><span>'+esc(x.apName||"AP")+'</span><b class="diagnostic-keys">radio stats: '+esc((x.radioStatKeys||[]).join(", ")||"none")+' · config: '+esc((x.radioConfigKeys||[]).join(", ")||"none")+'</b></div>'
     ).join(""):'<div><span>RF field discovery</span><b>No AP diagnostic structure returned yet.</b></div>';
+    const qualityRows=
+      '<div><span>Neighbor RSSI decision use</span><b>'+(neighborRssiTrusted?"Validated / enabled":"Validation pending · excluded from decisions")+'</b></div>'+
+      '<div><span>Positive RSSI magnitudes normalized</span><b>'+esc(quality.neighborRssiPositiveMagnitudeNormalized??0)+'</b></div>'+
+      '<div><span>Missing / invalid neighbor RSSI</span><b>'+esc(quality.neighborRssiMissingOrInvalid??0)+'</b></div>';
+    diag.innerHTML=discovered+qualityRows;
   }
 }
 
