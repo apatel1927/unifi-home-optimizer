@@ -480,13 +480,26 @@
       <div class="section-head">
         <div>
           <h2>Neighbor channel summary</h2>
-          <span class="muted">Unique neighboring BSS observations grouped by band/channel. BSS pressure remains count-based while U7 neighbor-RSSI field semantics are being validated; normalized RSSI is shown for observation only.</span>
+          <span class="muted">Unique neighboring BSS observations grouped by band/channel. BSS pressure remains count-based while U7 neighbor signal fields are being validated. Raw rssi/signal values and a provisional normalization are diagnostic only.</span>
         </div>
       </div>
       <div class="panel table-wrap rf-channel-summary-panel">
         <table>
-          <thead><tr><th>Band</th><th>Channel</th><th>Unique BSS</th><th>Strongest neighbor</th><th>Observed BSS pressure</th></tr></thead>
+          <thead><tr><th>Band</th><th>Channel</th><th>Unique BSS</th><th>Signal diagnostic sample</th><th>Observed BSS pressure</th></tr></thead>
           <tbody id="rfNeighborChannelSummary"></tbody>
+        </table>
+      </div>
+
+      <div class="section-head">
+        <div>
+          <h2>Neighbor signal field diagnostics</h2>
+          <span class="muted">Compact raw examples from the controller. No unit is assumed for provisional signal values until the field semantics are verified.</span>
+        </div>
+      </div>
+      <div class="panel table-wrap">
+        <table>
+          <thead><tr><th>Neighbor</th><th>raw rssi</th><th>raw signal</th><th>raw signal_dbm</th><th>Selected field</th><th>Provisional normalized</th></tr></thead>
+          <tbody id="rfSignalDiagnosticsTable"></tbody>
         </table>
       </div>
 
@@ -494,7 +507,7 @@
         <summary>Show raw neighboring BSS observations <span id="rfNeighborRawCount" class="muted"></span></summary>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>SSID</th><th>BSSID</th><th>Band</th><th>Channel</th><th>RSSI</th><th>Noise</th><th>Reporting AP</th></tr></thead>
+            <thead><tr><th>SSID</th><th>BSSID</th><th>Band</th><th>Channel</th><th>raw rssi</th><th>raw signal</th><th>raw signal_dbm</th><th>Provisional normalized</th><th>Selected field</th><th>Reporting AP</th></tr></thead>
             <tbody id="rfNeighborTable"></tbody>
           </table>
         </div>
@@ -519,7 +532,7 @@
       </div>
 
       <div class="panel notice">
-        Safe advisory mode: the planner uses passive current-channel RF telemetry when your controller exposes it, alongside retry history and own-AP overlap. Neighbor RSSI is not used to select a channel until its controller field semantics are independently validated. Active/off-channel scanning remains disabled until its controller-specific command is separately verified. Radio changes still use the gated A/B/A workflow rather than silent tuning.
+        Safe advisory mode: the planner uses passive current-channel RF telemetry when your controller exposes it, alongside retry history and own-AP overlap. Raw neighboring signal fields are diagnostic only and are not used to select or score a channel until their controller semantics are independently validated. Active/off-channel scanning remains disabled until its controller-specific command is separately verified. Radio changes still use the gated A/B/A workflow rather than silent tuning.
       </div>
 
       <div class="summary-grid" id="channelSummaryCards"></div>
