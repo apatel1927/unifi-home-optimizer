@@ -250,7 +250,7 @@ Speed tests use the official Ookla Speedtest CLI. Automatic mode lets Ookla choo
 
 The Network Audit page performs a read-only review of the current UniFi configuration and health data. Findings are deliberately separated into PASS, REVIEW, WARNING, and CRITICAL. REVIEW means the setting is context-dependent and should be confirmed rather than automatically changed.
 
-The first audit release checks device health, firmware availability, duplicate active IPs, VLAN/network inventory, DHCP guarding, Wi-Fi security, 6 GHz consistency, MLO readiness, BSS Transition, Band Steering, client isolation context, radio-width sanity, obvious wired negotiation mismatches, firewall/ACL inventory, broad allow policies, WAN interfaces, gateway QoS throughput risk, and DNS policy inventory.
+The first audit release checks device health, firmware availability, duplicate active IPs, VLAN/network inventory, DHCP guarding, Wi-Fi security, 6 GHz consistency, MLO readiness, BSS Transition, Band Steering, client isolation context, radio-width sanity, obvious wired negotiation mismatches, firewall/ACL inventory, broad allow policies, WAN interfaces, gateway QoS throughput risk, and DNS policy inventory. Gateway QoS discovery prefers UniFi Network's local v2 QoS inventory when private/local credentials are configured, with the Integration API retained as a fallback.
 
 Future audit releases can add port-forward/UPnP exposure, deeper switch error/PoE analysis, remote-access posture, VPN posture and change auditing as those data sources are verified.
 
