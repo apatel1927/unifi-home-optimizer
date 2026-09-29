@@ -2,7 +2,13 @@
 
 Self-hosted UniFi Network monitoring and safe optimization dashboard designed for Unraid.
 
-## v0.22.0
+## v0.22.1
+
+- Mobile navigation now uses a persistent Menu button and slide-out drawer instead of a long horizontally scrolling tab strip
+- Selecting a page closes the drawer, updates the current-page label, and returns the view to the top for faster tab switching on phones
+- RF Environment now defaults to a compact neighbor channel summary instead of rendering the full neighboring-BSS list inline
+- Neighbor observations are deduplicated by BSSID/channel and grouped by band/channel with unique BSS count, strongest observed RSSI, and a clearly labeled relative BSS-pressure heuristic
+- The raw neighbor list remains available in a collapsed expandable section for detailed troubleshooting
 
 - Passive RF Environment page collects read-only classic UniFi radio telemetry every 5 minutes when available
 - RF telemetry includes current-channel utilization, self RX/TX airtime, estimated external busy time, noise floor, TX power, retry rate, client count, and neighboring BSS observations exposed by the controller
