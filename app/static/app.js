@@ -1923,6 +1923,20 @@ function rfPct(v){
 function rfDbm(v){
   return v==null?"—":Number(v).toFixed(0)+" dBm";
 }
+function rfSignalObservation(n){
+  const raw=(v)=>v==null||v===""?"—":String(v);
+  const source=n.signalObservationSource||"none";
+  const sourceRaw=n.signalObservationRaw;
+  const provisional=n.provisionalSignal;
+  const pieces=[];
+  if(n.rawRssi!=null&&n.rawRssi!=="")pieces.push("rssi="+raw(n.rawRssi));
+  if(n.rawSignal!=null&&n.rawSignal!=="")pieces.push("signal="+raw(n.rawSignal));
+  if(n.rawSignalDbm!=null&&n.rawSignalDbm!=="")pieces.push("signal_dbm="+raw(n.rawSignalDbm));
+  if(source!=="none"&&sourceRaw!=null)pieces.push("source "+source);
+  if(provisional!=null)pieces.push("provisional "+Number(provisional).toFixed(0));
+  return pieces.length?pieces.join(" · "):"No signal fields";
+}
+
 function rfNeighborSummary(neighbors,rssiTrusted=false){
   const dedup=new Map();
   for(const n of neighbors||[]){
@@ -1931,10 +1945,9 @@ function rfNeighborSummary(neighbors,rssiTrusted=false){
     const identity=(n.bssid||((n.ssid||"unknown")+"@"+channel+"@"+band)).toLowerCase();
     const key=band+"|"+channel+"|"+identity;
     const existing=dedup.get(key);
-    const rssi=Number.isFinite(Number(n.rssi))?Number(n.rssi):null;
-    if(!existing || (rssi!=null && (existing.rssi==null || rssi>existing.rssi))){
-      dedup.set(key,{...n,rssi});
-    }
+    const completeness=["rawRssi","rawSignal","rawSignalDbm"].reduce((sum,k)=>sum+(n[k]!=null&&n[k]!==""?1:0),0);
+    const existingCompleteness=existing?["rawRssi","rawSignal","rawSignalDbm"].reduce((sum,k)=>sum+(existing[k]!=null&&existing[k]!==""?1:0),0):-1;
+    if(!existing || completeness>existingCompleteness)dedup.set(key,{...n});
   }
 
   const groups=new Map();
@@ -1942,21 +1955,15 @@ function rfNeighborSummary(neighbors,rssiTrusted=false){
     const band=n.band==null?"?":String(n.band);
     const channel=n.channel==null?"?":String(n.channel);
     const key=band+"|"+channel;
-    if(!groups.has(key))groups.set(key,{band,channel,count:0,strongest:null,strongestSsid:null,strongestNormalized:false});
+    if(!groups.has(key))groups.set(key,{band,channel,count:0,signalSample:null});
     const g=groups.get(key);
     g.count++;
-    if(n.rssi!=null && (g.strongest==null || n.rssi>g.strongest)){
-      g.strongest=n.rssi;
-      g.strongestSsid=n.ssid||"Hidden / unknown";
-      g.strongestNormalized=!!n.rssiNormalizedPositiveMagnitude;
-    }
+    if(!g.signalSample && (n.rawRssi!=null||n.rawSignal!=null||n.rawSignalDbm!=null))g.signalSample=n;
   }
 
   const classify=g=>{
     if(g.count>=15)return {label:"HIGH",cls:"high"};
     if(g.count>=8)return {label:"MODERATE",cls:"moderate"};
-    if(rssiTrusted&&g.strongest!=null&&g.strongest>=-65)return {label:"HIGH",cls:"high"};
-    if(rssiTrusted&&g.strongest!=null&&g.strongest>=-75)return {label:"MODERATE",cls:"moderate"};
     return {label:"LOW",cls:"low"};
   };
 
@@ -2014,8 +2021,8 @@ function renderRfEnvironment(d){
       notice.innerHTML='<b class="warn">RF telemetry is not available yet</b><br><span class="muted">'+esc(d.lastError)+'</span>';
     }else{
       const trustNote=neighborRssiTrusted
-        ?" Neighbor RSSI semantics are validated for pressure scoring."
-        :" Neighbor RSSI is normalized for display when needed but excluded from pressure/channel decisions until the controller field semantics are independently validated.";
+        ?" Neighbor signal semantics are validated for pressure scoring."
+        :" Raw rssi/signal fields are shown separately for diagnosis. Any provisional normalization is unlabeled and excluded from pressure/channel decisions until the controller field semantics are independently validated.";
       notice.innerHTML='<b class="good">Passive RF monitoring active</b><br><span class="muted">Read-only sample every '+Math.round(Number(d.sampleIntervalSeconds||300)/60)+' minutes. Neighbor observations are shown only when the controller exposes them. No active/off-channel scan is being triggered.'+esc(trustNote)+'</span>';
     }
   }
@@ -2072,13 +2079,13 @@ function renderRfEnvironment(d){
   if(summaryTable){
     summaryTable.innerHTML=neighborSummary.rows.length?neighborSummary.rows.map(g=>{
       const pressure=neighborSummary.classify(g);
-      const strongest=g.strongest==null?"—":rfDbm(g.strongest)+" · "+(g.strongestSsid||"")+(g.strongestNormalized?" · normalized sign":"");
+      const signalSample=g.signalSample?rfSignalObservation(g.signalSample):"—";
       return '<tr>'+
         '<td>'+esc(g.band==="?"?"Unknown":g.band+" GHz")+'</td>'+
         '<td><b>'+esc(g.channel)+'</b></td>'+
         '<td>'+esc(g.count)+'</td>'+
-        '<td>'+esc(strongest)+'</td>'+
-        '<td><span class="rf-pressure '+pressure.cls+'"><span class="rf-pressure-dot"></span>'+pressure.label+'</span><div class="muted">'+(neighborRssiTrusted?"count + RSSI":"count only")+'</div></td>'+
+        '<td>'+esc(signalSample)+'</td>'+
+        '<td><span class="rf-pressure '+pressure.cls+'"><span class="rf-pressure-dot"></span>'+pressure.label+'</span><div class="muted">count only</div></td>'+
       '</tr>';
     }).join(""):'<tr><td colspan="5"><div class="empty">No neighboring BSS observations are available yet.</div></td></tr>';
   }
@@ -2088,10 +2095,40 @@ function renderRfEnvironment(d){
 
   const nt=document.getElementById("rfNeighborTable");
   if(nt){
-    const sorted=[...neighbors].sort((a,b)=>Number(b.rssi??-999)-Number(a.rssi??-999));
+    const sorted=[...neighbors].sort((a,b)=>{
+      const ba=String(a.band??"9"),bb=String(b.band??"9");
+      if(ba!==bb)return Number(ba)-Number(bb);
+      const ca=Number(a.channel??999),cb=Number(b.channel??999);
+      if(ca!==cb)return ca-cb;
+      return String(a.ssid||"").localeCompare(String(b.ssid||""));
+    });
     nt.innerHTML=sorted.length?sorted.slice(0,250).map(x=>
-      '<tr><td><b>'+esc(x.ssid||"Hidden / unknown")+'</b></td><td class="client-ip">'+esc(x.bssid||"—")+'</td><td>'+esc(x.band==null?"—":x.band+" GHz")+'</td><td>'+esc(x.channel??"—")+'</td><td>'+esc(rfDbm(x.rssi))+'</td><td>'+esc(rfDbm(x.noiseDbm))+'</td><td>'+esc(x.sourceApMac||"Site-wide")+'</td></tr>'
-    ).join(""):'<tr><td colspan="7"><div class="empty">The controller did not return neighboring BSS observations from the read-only classic endpoint.</div></td></tr>';
+      '<tr><td><b>'+esc(x.ssid||"Hidden / unknown")+'</b></td>'+
+      '<td class="client-ip">'+esc(x.bssid||"—")+'</td>'+
+      '<td>'+esc(x.band==null?"—":x.band+" GHz")+'</td>'+
+      '<td>'+esc(x.channel??"—")+'</td>'+
+      '<td>'+esc(x.rawRssi??"—")+'</td>'+
+      '<td>'+esc(x.rawSignal??"—")+'</td>'+
+      '<td>'+esc(x.rawSignalDbm??"—")+'</td>'+
+      '<td>'+esc(x.provisionalSignal==null?"—":Number(x.provisionalSignal).toFixed(0))+'</td>'+
+      '<td>'+esc(x.signalObservationSource||"—")+'</td>'+
+      '<td>'+esc(x.sourceApMac||"Site-wide")+'</td></tr>'
+    ).join(""):'<tr><td colspan="10"><div class="empty">The controller did not return neighboring BSS observations from the read-only classic endpoint.</div></td></tr>';
+  }
+
+  const signalDiag=document.getElementById("rfSignalDiagnosticsTable");
+  if(signalDiag){
+    const examples=(d.dataQuality||{}).signalExamples||[];
+    signalDiag.innerHTML=examples.length?examples.map(x=>
+      '<tr>'+
+        '<td><b>'+esc(x.ssid||"Hidden / unknown")+'</b><div class="muted">'+esc(x.band==null?"—":x.band+" GHz · ch "+(x.channel??"—"))+'</div></td>'+
+        '<td>'+esc(x.rawRssi??"—")+'</td>'+
+        '<td>'+esc(x.rawSignal??"—")+'</td>'+
+        '<td>'+esc(x.rawSignalDbm??"—")+'</td>'+
+        '<td>'+esc(x.source||"—")+'</td>'+
+        '<td>'+esc(x.provisionalSignal==null?"—":Number(x.provisionalSignal).toFixed(0))+'</td>'+
+      '</tr>'
+    ).join(""):'<tr><td colspan="6"><div class="empty">No raw neighboring signal fields were exposed in this sample.</div></td></tr>';
   }
 
   const diag=document.getElementById("rfDiagnostics");
@@ -2102,9 +2139,13 @@ function renderRfEnvironment(d){
       '<div><span>'+esc(x.apName||"AP")+'</span><b class="diagnostic-keys">radio stats: '+esc((x.radioStatKeys||[]).join(", ")||"none")+' · config: '+esc((x.radioConfigKeys||[]).join(", ")||"none")+'</b></div>'
     ).join(""):'<div><span>RF field discovery</span><b>No AP diagnostic structure returned yet.</b></div>';
     const qualityRows=
-      '<div><span>Neighbor RSSI decision use</span><b>'+(neighborRssiTrusted?"Validated / enabled":"Validation pending · excluded from decisions")+'</b></div>'+
-      '<div><span>Positive RSSI magnitudes normalized</span><b>'+esc(quality.neighborRssiPositiveMagnitudeNormalized??0)+'</b></div>'+
-      '<div><span>Missing / invalid neighbor RSSI</span><b>'+esc(quality.neighborRssiMissingOrInvalid??0)+'</b></div>';
+      '<div><span>Neighbor signal decision use</span><b>'+(neighborRssiTrusted?"Validated / enabled":"Validation pending · excluded from decisions")+'</b></div>'+
+      '<div><span>Raw rssi field present</span><b>'+esc(quality.neighborRawRssiCount??0)+'</b></div>'+
+      '<div><span>Raw signal field present</span><b>'+esc(quality.neighborRawSignalCount??0)+'</b></div>'+
+      '<div><span>Raw signal_dbm field present</span><b>'+esc(quality.neighborRawSignalDbmCount??0)+'</b></div>'+
+      '<div><span>Rows with both rssi + signal</span><b>'+esc(quality.neighborPairedRssiSignalCount??0)+'</b></div>'+
+      '<div><span>Positive magnitudes provisionally normalized</span><b>'+esc(quality.neighborRssiPositiveMagnitudeNormalized??0)+'</b></div>'+
+      '<div><span>Missing / invalid provisional signal</span><b>'+esc(quality.neighborRssiMissingOrInvalid??0)+'</b></div>';
     diag.innerHTML=discovered+qualityRows;
   }
 }

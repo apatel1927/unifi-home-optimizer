@@ -25,7 +25,7 @@ from .rf_environment import parse_rf_environment
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.2"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.3"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -689,14 +689,20 @@ def _build_support_context():
     rf_neighbors=[]
     for neighbor in live_rf.get("neighbors") or []:
         item=dict(neighbor)
-        # Neighbor RSSI/noise semantics are still controller-version-sensitive.
+        # Neighbor signal semantics are still controller-version-sensitive.
         # Keep AI proposals count/topology based until those fields are independently validated.
-        item.pop("rssi",None)
-        item.pop("noiseDbm",None)
+        for key in (
+            "rssi","noiseDbm","rawRssi","rawSignal","rawSignalDbm",
+            "rawNoise","rawNoiseDbm","signalObservationRaw","provisionalSignal",
+            "rssiNormalizedPositiveMagnitude","noiseNormalizedPositiveMagnitude"
+        ):
+            item.pop(key,None)
         rf_neighbors.append(item)
     rf_summary["neighbors"]=rf_neighbors
     rf_summary["neighborRssiTrusted"]=False
-    rf_summary["dataQuality"]=live_rf.get("dataQuality") or {}
+    rf_quality=dict(live_rf.get("dataQuality") or {})
+    rf_quality.pop("signalExamples",None)
+    rf_summary["dataQuality"]=rf_quality
     rf_summary["lastSampleAt"]=rf_environment_last_sample_at
     rf_summary["lastError"]=rf_environment_last_error
 
