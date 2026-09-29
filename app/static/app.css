@@ -832,3 +832,73 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
 .compact-head{margin:0 0 10px}
 .diagnostic-keys{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px;line-height:1.45;overflow-wrap:anywhere}
 .retest-cancelled-btn{white-space:nowrap}
+
+
+/* v0.22.0 RF environment, expectations, AI approvals */
+.rf-summary-grid{margin-bottom:16px}
+#rfRadioTable td,#rfNeighborTable td{white-space:nowrap}
+.channel-rf-evidence{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  margin:10px 0 4px;
+  padding:8px 10px;
+  border-radius:9px;
+  background:rgba(79,140,255,.07);
+  border:1px solid rgba(79,140,255,.14);
+  font-size:10px;
+}
+.channel-rf-evidence span{color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.channel-rf-evidence b{color:#cfe0f6;text-align:right}
+.wired-expectation{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:5px;
+  margin-top:7px;
+}
+.wired-expectation span{
+  font-size:9px;
+  color:#7ce7bc;
+  font-weight:800;
+}
+.wired-expectation button{
+  padding:5px 7px;
+  font-size:9px;
+}
+.proposal-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  gap:12px;
+  margin-bottom:18px;
+}
+.proposal-card{padding:16px}
+.proposal-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.proposal-head h3{margin:5px 0 0;font-size:14px}
+.proposal-card p{font-size:11px;line-height:1.5;color:#ccd9e8}
+.proposal-param{
+  margin-top:10px;
+  padding:7px 9px;
+  border-radius:8px;
+  background:rgba(79,140,255,.08);
+  color:#bcd0ec;
+  font-size:10px;
+  font-weight:800;
+}
+.proposal-meta{
+  display:grid;
+  grid-template-columns:100px 1fr;
+  gap:8px;
+  margin-top:12px;
+  padding-top:10px;
+  border-top:1px solid rgba(90,122,165,.14);
+}
+.proposal-meta div{display:flex;flex-direction:column;gap:3px}
+.proposal-meta span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.proposal-meta b{font-size:10px;color:#dce8f6;font-weight:700;line-height:1.4}
+.proposal-controls{display:flex;gap:8px;margin-top:13px}
+.proposal-result{margin-top:9px;white-space:pre-wrap;word-break:break-word}
+@media(max-width:700px){
+  .proposal-grid{grid-template-columns:1fr}
+  .proposal-meta{grid-template-columns:1fr}
+}
