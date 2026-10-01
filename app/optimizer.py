@@ -411,6 +411,14 @@ def _best_scan_assignment(rows, band, width, spectrum_scans, minimum_improvement
         current_keys.append(key)
 
     current_cost=sum(by_ap[row.get("apId")][key]["score"] for row,key in zip(rows,current_keys))
+    for row,key in zip(rows,current_keys):
+        meta=evidence.get(row.get("apId")) or {}
+        meta["currentScore"]=by_ap[row.get("apId")][key]["score"]
+        local_best=min(by_ap[row.get("apId")].values(),key=lambda x:x.get("score",9999))
+        meta["bestLocalScore"]=local_best.get("score")
+        meta["bestLocalChannel"]=local_best.get("channel")
+        meta["bestLocalKey"]=local_best.get("key")
+        evidence[row.get("apId")]=meta
     options=[list(by_ap[row.get("apId")].keys()) for row in rows]
     best=None
     for combo in itertools.product(*options):
@@ -546,7 +554,11 @@ def build_channel_plan(snapshot, retry_trends=None, rf_environment=None, spectru
         actions=config_actions+diagnostic_actions
         scan_meta=(scan_target or {}).get("scanMeta") or scan24_meta.get(row.get("apId")) or {}
         current_scan=(scan_target or {}).get("currentScore")
+        if current_scan is None:
+            current_scan=scan_meta.get("currentScore")
         recommended_scan=(scan_target or {}).get("score")
+        if recommended_scan is None:
+            recommended_scan=scan_meta.get("bestLocalScore")
         plan.append({**row,"recommendedChannel":rec_ch,"recommendedWidthMHz":20,
                      "testableChange":testable,"status":status,
                      "scanBackedRecommendation":bool(scan_target and rec_ch!=ch),
@@ -609,8 +621,10 @@ def build_channel_plan(snapshot, retry_trends=None, rf_environment=None, spectru
                      "scanAgeSeconds":scan_meta.get("ageSeconds"),
                      "scanAt":scan_meta.get("scanAt"),
                      "scanCandidateCount":scan_meta.get("candidateCount"),
-                     "scanCurrentScore":(scan_target or {}).get("currentScore"),
-                     "scanRecommendedScore":(scan_target or {}).get("score"),
+                     "scanCurrentScore":((scan_target or {}).get("currentScore")
+                                         if (scan_target or {}).get("currentScore") is not None else scan_meta.get("currentScore")),
+                     "scanRecommendedScore":((scan_target or {}).get("score")
+                                             if (scan_target or {}).get("score") is not None else scan_meta.get("bestLocalScore")),
                      "scanImprovementScore":(scan_target or {}).get("improvementScore"),
                      "actions":actions or ["Keep current 5 GHz block"]})
 
