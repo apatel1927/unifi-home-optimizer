@@ -795,7 +795,7 @@ def _build_support_context():
     retry=db.ap_retry_trends(15)
     baselines=db.ap_client_baselines(24)
     analysis=analyze(snap,retry,baselines)
-    channel_plan=build_channel_plan(snap,retry,rf_environment_live)
+    channel_plan=build_channel_plan(snap,retry,rf_environment_live,spectrum_scan_live)
     wired=_wired_audit_for_snapshot(snap)
     audit=build_network_audit(snap,api,wired_audit=wired,qos_state=_gateway_qos_state((snap.get('site') or {}).get('id')))
 
@@ -838,6 +838,7 @@ def _build_support_context():
         "wiredAudit":wired,
         "wanQuality24h":wan,
         "rfEnvironment24h":rf_summary,
+        "spectrumScan":spectrum_scan_live,
         "traffic24h":{
             "usage":traffic,
             "dpi":traffic_dpi,
@@ -918,7 +919,7 @@ def _validate_ai_proposal(proposal, snapshot=None):
             retry=db.ap_retry_trends(15)
         except Exception:
             retry={}
-        plan=build_channel_plan(snap,retry,rf_environment_live)
+        plan=build_channel_plan(snap,retry,rf_environment_live,spectrum_scan_live)
         candidate=next((
             x for x in (plan.get("items") or [])
             if x.get("apId")==params.get("apId")
@@ -1086,7 +1087,7 @@ def report_data():
         print("AP baseline error:", e, flush=True)
         ap_baselines = {}
     analysis = analyze(snap, retry_trends, ap_baselines)
-    channel_plan = build_channel_plan(snap, retry_trends, rf_environment_live)
+    channel_plan = build_channel_plan(snap, retry_trends, rf_environment_live, spectrum_scan_live)
     aps = [d for d in snap["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     switches = [d for d in snap["devices"] if d.get("optimizerType") in ("SWITCH","GATEWAY")]
     gateway = next((d for d in snap["devices"] if d.get("optimizerType") == "GATEWAY"), None)
@@ -1774,7 +1775,7 @@ def probe_internet():
         return False, None
 
 def monitor_loop():
-    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic,wan_last_sample_monotonic,rf_environment_last_sample_monotonic
+    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic,wan_last_sample_monotonic,rf_environment_last_sample_monotonic,spectrum_scan_last_sample_monotonic
     elapsed=0
     while True:
         try:
@@ -1793,6 +1794,8 @@ def monitor_loop():
                     _sample_traffic(data)
                 if (time.monotonic()-rf_environment_last_sample_monotonic) >= rf_environment_sample_seconds:
                     _sample_rf_environment(data)
+                if private_api.configured and (time.monotonic()-spectrum_scan_last_sample_monotonic) >= spectrum_scan_sample_seconds and not spectrum_scan_job.get("running"):
+                    _collect_spectrum_scan_cache(data)
                 if (time.monotonic()-wan_last_sample_monotonic) >= wan_quality_sample_seconds:
                     _sample_wan_quality()
                 analysis=data.get("analysis") or {}
@@ -2460,7 +2463,7 @@ def channel_plan():
         retry_trends=db.ap_retry_trends(15)
     except Exception:
         retry_trends={}
-    return jsonify({"ok":True,**build_channel_plan(snap,retry_trends,rf_environment_live)})
+    return jsonify({"ok":True,**build_channel_plan(snap,retry_trends,rf_environment_live,spectrum_scan_live)})
 
 @app.route("/api/system")
 def system_info():
@@ -2476,7 +2479,13 @@ def system_info():
         "lastMonitorCycle":last_monitor_cycle,
         "lastMonitorError":last_monitor_error,
         "database":stats,
-        "privateRf":_private_rf_status()
+        "privateRf":_private_rf_status(),
+        "spectrumScan":{
+            **spectrum_scan_live,
+            "job":dict(spectrum_scan_job),
+            "lastSampleAt":spectrum_scan_last_sample_at,
+            "lastError":spectrum_scan_last_error,
+        }
     })
 
 @app.route("/api/private-rf/discover",methods=["POST"])
