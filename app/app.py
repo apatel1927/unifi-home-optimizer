@@ -1945,6 +1945,9 @@ def rf_environment_data():
     live=rf_environment_live or {"radios":[],"neighbors":[],"diagnostics":[]}
     if private_api.configured and not live.get("radios"):
         live=_collect_rf_environment()
+    scan=spectrum_scan_live
+    if private_api.configured and not (scan.get("accessPoints") or []):
+        scan=_collect_spectrum_scan_cache()
     return jsonify({
         "ok":True,
         **summary,
@@ -1957,9 +1960,43 @@ def rf_environment_data():
         "sampleIntervalSeconds":rf_environment_sample_seconds,
         "lastSampleAt":rf_environment_last_sample_at,
         "lastError":rf_environment_last_error,
-        "activeScanAvailable":False,
-        "activeScanDetail":"Active spectrum/RF scanning is intentionally disabled until a controller-specific scan command is verified. Passive telemetry and neighboring-BSS observations are read-only."
+        "activeScanAvailable":bool(private_api.configured),
+        "activeScanDetail":"Manual spectrum scanning uses UniFi's classic spectrum-scan command. It is never automatic because some AP/firmware combinations briefly interrupt client traffic. One AP is scanned at a time and channel changes still require A/B/A validation.",
+        "spectrumScan":scan,
+        "scanJob":dict(spectrum_scan_job),
     })
+
+@app.route("/api/rf-scan/start",methods=["POST"])
+def rf_spectrum_scan_start():
+    if not private_api.configured:
+        return jsonify({"ok":False,"error":"Private/classic UniFi credentials are not configured"}),400
+    body=request.get_json(silent=True) or {}
+    if body.get("confirmDisruption") is not True:
+        return jsonify({"ok":False,"error":"confirmDisruption=true is required because a manual RF scan can briefly interrupt Wi-Fi traffic"}),400
+    if _rf_test_active():
+        return jsonify({"ok":False,"error":"An RF A/B/A test is active. Finish or cancel it before starting a spectrum scan."}),409
+    mac=_norm_mac(body.get("apMac"))
+    if not mac:
+        return jsonify({"ok":False,"error":"apMac is required"}),400
+    snap=build_snapshot(api)
+    if not snap:
+        return jsonify({"ok":False,"error":"Unable to retrieve UniFi snapshot"}),500
+    ap=next((
+        d for d in snap.get("devices",[])
+        if d.get("optimizerType")=="ACCESS_POINT" and _norm_mac(d.get("macAddress") or d.get("mac"))==mac
+    ),None)
+    if not ap:
+        return jsonify({"ok":False,"error":"Selected access point was not found"}),404
+    ok,error=_start_spectrum_scan(ap)
+    if not ok:
+        return jsonify({"ok":False,"error":error,"job":dict(spectrum_scan_job)}),409
+    return jsonify({"ok":True,"job":dict(spectrum_scan_job)})
+
+@app.route("/api/rf-scan/refresh",methods=["POST"])
+def rf_spectrum_scan_refresh():
+    if not private_api.configured:
+        return jsonify({"ok":False,"error":"Private/classic UniFi credentials are not configured"}),400
+    return jsonify({"ok":True,"spectrumScan":_collect_spectrum_scan_cache(),"job":dict(spectrum_scan_job)})
 
 @app.route("/api/rf-environment/sample",methods=["POST"])
 def rf_environment_sample_now():
