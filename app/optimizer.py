@@ -275,7 +275,9 @@ def _scan_ap_band(ap, band, spectrum_scans, max_age_seconds=86400):
         if not same or not (entry.get("rows") or []):
             continue
         age=entry.get("ageSeconds")
-        if age is not None and float(age)>float(max_age_seconds):
+        # Unknown-age scan tables are shown in diagnostics but are not trusted
+        # for channel decisions. Candidate scoring requires a timestamped scan.
+        if age is None or float(age)>float(max_age_seconds):
             continue
         candidates.append(entry)
     if not candidates:
@@ -650,7 +652,7 @@ def build_channel_plan(snapshot, retry_trends=None, rf_environment=None, spectru
 
     return {
         "mode":"SAFE_ADVISORY",
-        "externalRfScanAvailable":bool(spectrum_scans and (spectrum_scans.get("freshCount") or spectrum_scans.get("availableCount"))),
+        "externalRfScanAvailable":bool(spectrum_scans and spectrum_scans.get("freshCount")),
         "spectrumScanFreshCount":(spectrum_scans or {}).get("freshCount",0),
         "scanBackedCount":sum(1 for x in plan if x.get("scanBackedRecommendation")),
         "automaticRadioWritesAvailable":False,
