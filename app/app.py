@@ -681,6 +681,113 @@ def _sample_rf_environment(snapshot=None):
         rf_environment_last_sample_at=datetime.now(timezone.utc).isoformat()
     return parsed
 
+def _collect_spectrum_scan_cache(snapshot=None):
+    global spectrum_scan_live,spectrum_scan_last_sample_monotonic,spectrum_scan_last_sample_at,spectrum_scan_last_error
+    if not private_api.configured:
+        spectrum_scan_live={"accessPoints":[],"availableCount":0,"freshCount":0}
+        spectrum_scan_last_error="Private/classic UniFi credentials are not configured"
+        return spectrum_scan_live
+
+    try:
+        snap=snapshot or build_snapshot(api)
+        if not snap:
+            raise RuntimeError("Unable to retrieve UniFi snapshot")
+        aps=[d for d in snap.get("devices",[]) if d.get("optimizerType")=="ACCESS_POINT"]
+        scans=[]
+        errors=[]
+        for ap in aps:
+            mac=ap.get("macAddress") or ap.get("mac")
+            if not mac:
+                continue
+            state=private_api.spectrum_scan_state(mac)
+            if not state.get("ok"):
+                errors.append((ap.get("name") or mac)+": "+str(state.get("error") or state.get("status")))
+                scans.append(normalize_spectrum_scan(
+                    [],ap_mac=mac,ap_name=ap.get("name"),ap_id=ap.get("id"),model=ap.get("model")
+                ))
+                continue
+            scans.append(normalize_spectrum_scan(
+                state.get("items") or [],
+                ap_mac=mac,ap_name=ap.get("name"),ap_id=ap.get("id"),model=ap.get("model")
+            ))
+        spectrum_scan_live=scan_summary(scans,86400)
+        spectrum_scan_last_sample_monotonic=time.monotonic()
+        spectrum_scan_last_sample_at=datetime.now(timezone.utc).isoformat()
+        spectrum_scan_last_error=" | ".join(errors[:3]) if errors and not spectrum_scan_live.get("availableCount") else None
+        spectrum_scan_live["lastSampleAt"]=spectrum_scan_last_sample_at
+        spectrum_scan_live["lastError"]=spectrum_scan_last_error
+        return spectrum_scan_live
+    except Exception as e:
+        spectrum_scan_last_error=str(e)
+        spectrum_scan_live["lastError"]=spectrum_scan_last_error
+        return spectrum_scan_live
+
+def _spectrum_scan_worker(ap):
+    global spectrum_scan_job
+    mac=ap.get("macAddress") or ap.get("mac")
+    name=ap.get("name") or mac
+    try:
+        result=private_api.start_spectrum_scan(mac)
+        if not result.get("ok"):
+            raise RuntimeError("Controller rejected spectrum scan: "+str(result.get("error") or result.get("data") or result.get("status")))
+        db.log("RF_SPECTRUM_SCAN",name,"Manual spectrum scan requested","ACCEPTED")
+        # Poll cached scan state until the controller reports completion or timeout.
+        deadline=time.monotonic()+240
+        saw_in_progress=False
+        while time.monotonic()<deadline:
+            time.sleep(5)
+            state=private_api.spectrum_scan_state(mac)
+            if not state.get("ok"):
+                continue
+            parsed=normalize_spectrum_scan(
+                state.get("items") or [],
+                ap_mac=mac,ap_name=name,ap_id=ap.get("id"),model=ap.get("model")
+            )
+            if parsed.get("inProgress"):
+                saw_in_progress=True
+                spectrum_scan_job["status"]="SCANNING"
+                continue
+            if parsed.get("available") and (saw_in_progress or parsed.get("latestAgeSeconds") is None or parsed.get("latestAgeSeconds")<300):
+                spectrum_scan_job["status"]="COMPLETE"
+                spectrum_scan_job["completedAt"]=datetime.now(timezone.utc).isoformat()
+                spectrum_scan_job["error"]=None
+                _collect_spectrum_scan_cache()
+                db.log("RF_SPECTRUM_SCAN",name,str(parsed.get("rowCount") or 0)+" spectrum rows cached","SUCCESS")
+                return
+        spectrum_scan_job["status"]="TIMEOUT"
+        spectrum_scan_job["error"]="Scan request was accepted but completion was not observed within 4 minutes. Cached results will still be refreshed."
+        spectrum_scan_job["completedAt"]=datetime.now(timezone.utc).isoformat()
+        _collect_spectrum_scan_cache()
+        db.log("RF_SPECTRUM_SCAN",name,spectrum_scan_job["error"],"TIMEOUT")
+    except Exception as e:
+        spectrum_scan_job["status"]="FAILED"
+        spectrum_scan_job["error"]=str(e)
+        spectrum_scan_job["completedAt"]=datetime.now(timezone.utc).isoformat()
+        db.log("RF_SPECTRUM_SCAN",name,str(e),"FAILED")
+    finally:
+        spectrum_scan_job["running"]=False
+
+def _start_spectrum_scan(ap):
+    global spectrum_scan_job
+    if not spectrum_scan_job_lock.acquire(blocking=False):
+        return False,"Another spectrum scan request is already starting"
+    try:
+        if spectrum_scan_job.get("running"):
+            return False,"Another spectrum scan is already running"
+        spectrum_scan_job={
+            "running":True,
+            "apMac":ap.get("macAddress") or ap.get("mac"),
+            "apName":ap.get("name"),
+            "startedAt":datetime.now(timezone.utc).isoformat(),
+            "completedAt":None,
+            "status":"STARTING",
+            "error":None,
+        }
+        threading.Thread(target=_spectrum_scan_worker,args=(ap,),daemon=True).start()
+        return True,None
+    finally:
+        spectrum_scan_job_lock.release()
+
 def _build_support_context():
     snap=build_snapshot(api)
     if not snap:
