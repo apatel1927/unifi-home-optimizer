@@ -22,10 +22,11 @@ from .wired_audit import build_wired_audit
 from .export_bundle import build_zip_bytes, build_json_bytes, compact_support_summary, sanitize
 from .ai_advisor import analyze_with_openai, generate_ai_proposals
 from .rf_environment import parse_rf_environment
+from .rf_scan import normalize_spectrum_scan, scan_summary
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.5"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.6"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -82,6 +83,21 @@ rf_environment_last_sample_monotonic = 0.0
 rf_environment_last_sample_at = None
 rf_environment_last_error = None
 rf_environment_live = {"radios":[],"neighbors":[],"diagnostics":[]}
+spectrum_scan_sample_seconds = 300
+spectrum_scan_last_sample_monotonic = 0.0
+spectrum_scan_last_sample_at = None
+spectrum_scan_last_error = None
+spectrum_scan_live = {"accessPoints":[],"availableCount":0,"freshCount":0}
+spectrum_scan_job_lock = threading.Lock()
+spectrum_scan_job = {
+    "running":False,
+    "apMac":None,
+    "apName":None,
+    "startedAt":None,
+    "completedAt":None,
+    "status":"IDLE",
+    "error":None,
+}
 
 def _wan_targets():
     gateway=urlparse(UNIFI_URL).hostname
@@ -665,6 +681,117 @@ def _sample_rf_environment(snapshot=None):
         rf_environment_last_sample_at=datetime.now(timezone.utc).isoformat()
     return parsed
 
+def _collect_spectrum_scan_cache(snapshot=None):
+    global spectrum_scan_live,spectrum_scan_last_sample_monotonic,spectrum_scan_last_sample_at,spectrum_scan_last_error
+    if not private_api.configured:
+        spectrum_scan_live={"accessPoints":[],"availableCount":0,"freshCount":0}
+        spectrum_scan_last_error="Private/classic UniFi credentials are not configured"
+        return spectrum_scan_live
+
+    try:
+        snap=snapshot or build_snapshot(api)
+        if not snap:
+            raise RuntimeError("Unable to retrieve UniFi snapshot")
+        aps=[d for d in snap.get("devices",[]) if d.get("optimizerType")=="ACCESS_POINT"]
+        scans=[]
+        errors=[]
+        for ap in aps:
+            mac=ap.get("macAddress") or ap.get("mac")
+            if not mac:
+                continue
+            state=private_api.spectrum_scan_state(mac)
+            if not state.get("ok"):
+                errors.append((ap.get("name") or mac)+": "+str(state.get("error") or state.get("status")))
+                scans.append(normalize_spectrum_scan(
+                    [],ap_mac=mac,ap_name=ap.get("name"),ap_id=ap.get("id"),model=ap.get("model")
+                ))
+                continue
+            scans.append(normalize_spectrum_scan(
+                state.get("items") or [],
+                ap_mac=mac,ap_name=ap.get("name"),ap_id=ap.get("id"),model=ap.get("model")
+            ))
+        spectrum_scan_live=scan_summary(scans,86400)
+        spectrum_scan_last_sample_monotonic=time.monotonic()
+        spectrum_scan_last_sample_at=datetime.now(timezone.utc).isoformat()
+        spectrum_scan_last_error=" | ".join(errors[:3]) if errors and not spectrum_scan_live.get("availableCount") else None
+        spectrum_scan_live["lastSampleAt"]=spectrum_scan_last_sample_at
+        spectrum_scan_live["lastError"]=spectrum_scan_last_error
+        return spectrum_scan_live
+    except Exception as e:
+        spectrum_scan_last_error=str(e)
+        spectrum_scan_live["lastError"]=spectrum_scan_last_error
+        return spectrum_scan_live
+
+def _spectrum_scan_worker(ap):
+    global spectrum_scan_job
+    mac=ap.get("macAddress") or ap.get("mac")
+    name=ap.get("name") or mac
+    try:
+        result=private_api.start_spectrum_scan(mac)
+        if not result.get("ok"):
+            raise RuntimeError(
+                "Controller rejected the manual spectrum-scan command. "
+                "Use UniFi Devices > AP > Insights > RF Environment > Scan, then click Refresh cached scans in the optimizer. "
+                "Controller response: "+str(result.get("error") or result.get("data") or result.get("status"))
+            )
+        db.log("RF_SPECTRUM_SCAN",name,"Manual spectrum scan requested","ACCEPTED")
+        # Poll cached scan state until the controller reports completion or timeout.
+        deadline=time.monotonic()+240
+        saw_in_progress=False
+        while time.monotonic()<deadline:
+            time.sleep(5)
+            state=private_api.spectrum_scan_state(mac)
+            if not state.get("ok"):
+                continue
+            parsed=normalize_spectrum_scan(
+                state.get("items") or [],
+                ap_mac=mac,ap_name=name,ap_id=ap.get("id"),model=ap.get("model")
+            )
+            if parsed.get("inProgress"):
+                saw_in_progress=True
+                spectrum_scan_job["status"]="SCANNING"
+                continue
+            if parsed.get("available") and (saw_in_progress or parsed.get("latestAgeSeconds") is None or parsed.get("latestAgeSeconds")<300):
+                spectrum_scan_job["status"]="COMPLETE"
+                spectrum_scan_job["completedAt"]=datetime.now(timezone.utc).isoformat()
+                spectrum_scan_job["error"]=None
+                _collect_spectrum_scan_cache()
+                db.log("RF_SPECTRUM_SCAN",name,str(parsed.get("rowCount") or 0)+" spectrum rows cached","SUCCESS")
+                return
+        spectrum_scan_job["status"]="TIMEOUT"
+        spectrum_scan_job["error"]="Scan request was accepted but completion was not observed within 4 minutes. Cached results will still be refreshed."
+        spectrum_scan_job["completedAt"]=datetime.now(timezone.utc).isoformat()
+        _collect_spectrum_scan_cache()
+        db.log("RF_SPECTRUM_SCAN",name,spectrum_scan_job["error"],"TIMEOUT")
+    except Exception as e:
+        spectrum_scan_job["status"]="FAILED"
+        spectrum_scan_job["error"]=str(e)
+        spectrum_scan_job["completedAt"]=datetime.now(timezone.utc).isoformat()
+        db.log("RF_SPECTRUM_SCAN",name,str(e),"FAILED")
+    finally:
+        spectrum_scan_job["running"]=False
+
+def _start_spectrum_scan(ap):
+    global spectrum_scan_job
+    if not spectrum_scan_job_lock.acquire(blocking=False):
+        return False,"Another spectrum scan request is already starting"
+    try:
+        if spectrum_scan_job.get("running"):
+            return False,"Another spectrum scan is already running"
+        spectrum_scan_job={
+            "running":True,
+            "apMac":ap.get("macAddress") or ap.get("mac"),
+            "apName":ap.get("name"),
+            "startedAt":datetime.now(timezone.utc).isoformat(),
+            "completedAt":None,
+            "status":"STARTING",
+            "error":None,
+        }
+        threading.Thread(target=_spectrum_scan_worker,args=(ap,),daemon=True).start()
+        return True,None
+    finally:
+        spectrum_scan_job_lock.release()
+
 def _build_support_context():
     snap=build_snapshot(api)
     if not snap:
@@ -672,7 +799,7 @@ def _build_support_context():
     retry=db.ap_retry_trends(15)
     baselines=db.ap_client_baselines(24)
     analysis=analyze(snap,retry,baselines)
-    channel_plan=build_channel_plan(snap,retry,rf_environment_live)
+    channel_plan=build_channel_plan(snap,retry,rf_environment_live,spectrum_scan_live)
     wired=_wired_audit_for_snapshot(snap)
     audit=build_network_audit(snap,api,wired_audit=wired,qos_state=_gateway_qos_state((snap.get('site') or {}).get('id')))
 
@@ -715,6 +842,7 @@ def _build_support_context():
         "wiredAudit":wired,
         "wanQuality24h":wan,
         "rfEnvironment24h":rf_summary,
+        "spectrumScan":spectrum_scan_live,
         "traffic24h":{
             "usage":traffic,
             "dpi":traffic_dpi,
@@ -795,7 +923,7 @@ def _validate_ai_proposal(proposal, snapshot=None):
             retry=db.ap_retry_trends(15)
         except Exception:
             retry={}
-        plan=build_channel_plan(snap,retry,rf_environment_live)
+        plan=build_channel_plan(snap,retry,rf_environment_live,spectrum_scan_live)
         candidate=next((
             x for x in (plan.get("items") or [])
             if x.get("apId")==params.get("apId")
@@ -963,7 +1091,7 @@ def report_data():
         print("AP baseline error:", e, flush=True)
         ap_baselines = {}
     analysis = analyze(snap, retry_trends, ap_baselines)
-    channel_plan = build_channel_plan(snap, retry_trends, rf_environment_live)
+    channel_plan = build_channel_plan(snap, retry_trends, rf_environment_live, spectrum_scan_live)
     aps = [d for d in snap["devices"] if d.get("optimizerType") == "ACCESS_POINT"]
     switches = [d for d in snap["devices"] if d.get("optimizerType") in ("SWITCH","GATEWAY")]
     gateway = next((d for d in snap["devices"] if d.get("optimizerType") == "GATEWAY"), None)
@@ -1651,7 +1779,7 @@ def probe_internet():
         return False, None
 
 def monitor_loop():
-    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic,wan_last_sample_monotonic,rf_environment_last_sample_monotonic
+    global last_monitor_cycle,last_monitor_error,traffic_last_sample_monotonic,wan_last_sample_monotonic,rf_environment_last_sample_monotonic,spectrum_scan_last_sample_monotonic
     elapsed=0
     while True:
         try:
@@ -1670,6 +1798,8 @@ def monitor_loop():
                     _sample_traffic(data)
                 if (time.monotonic()-rf_environment_last_sample_monotonic) >= rf_environment_sample_seconds:
                     _sample_rf_environment(data)
+                if private_api.configured and (time.monotonic()-spectrum_scan_last_sample_monotonic) >= spectrum_scan_sample_seconds and not spectrum_scan_job.get("running"):
+                    _collect_spectrum_scan_cache(data)
                 if (time.monotonic()-wan_last_sample_monotonic) >= wan_quality_sample_seconds:
                     _sample_wan_quality()
                 analysis=data.get("analysis") or {}
@@ -1819,6 +1949,9 @@ def rf_environment_data():
     live=rf_environment_live or {"radios":[],"neighbors":[],"diagnostics":[]}
     if private_api.configured and not live.get("radios"):
         live=_collect_rf_environment()
+    scan=spectrum_scan_live
+    if private_api.configured and not (scan.get("accessPoints") or []):
+        scan=_collect_spectrum_scan_cache()
     return jsonify({
         "ok":True,
         **summary,
@@ -1831,9 +1964,43 @@ def rf_environment_data():
         "sampleIntervalSeconds":rf_environment_sample_seconds,
         "lastSampleAt":rf_environment_last_sample_at,
         "lastError":rf_environment_last_error,
-        "activeScanAvailable":False,
-        "activeScanDetail":"Active spectrum/RF scanning is intentionally disabled until a controller-specific scan command is verified. Passive telemetry and neighboring-BSS observations are read-only."
+        "activeScanAvailable":bool(private_api.configured),
+        "activeScanDetail":"Manual spectrum scanning uses UniFi's classic spectrum-scan command. It is never automatic because some AP/firmware combinations briefly interrupt client traffic. One AP is scanned at a time and channel changes still require A/B/A validation.",
+        "spectrumScan":scan,
+        "scanJob":dict(spectrum_scan_job),
     })
+
+@app.route("/api/rf-scan/start",methods=["POST"])
+def rf_spectrum_scan_start():
+    if not private_api.configured:
+        return jsonify({"ok":False,"error":"Private/classic UniFi credentials are not configured"}),400
+    body=request.get_json(silent=True) or {}
+    if body.get("confirmDisruption") is not True:
+        return jsonify({"ok":False,"error":"confirmDisruption=true is required because a manual RF scan can briefly interrupt Wi-Fi traffic"}),400
+    if _rf_test_active():
+        return jsonify({"ok":False,"error":"An RF A/B/A test is active. Finish or cancel it before starting a spectrum scan."}),409
+    mac=_norm_mac(body.get("apMac"))
+    if not mac:
+        return jsonify({"ok":False,"error":"apMac is required"}),400
+    snap=build_snapshot(api)
+    if not snap:
+        return jsonify({"ok":False,"error":"Unable to retrieve UniFi snapshot"}),500
+    ap=next((
+        d for d in snap.get("devices",[])
+        if d.get("optimizerType")=="ACCESS_POINT" and _norm_mac(d.get("macAddress") or d.get("mac"))==mac
+    ),None)
+    if not ap:
+        return jsonify({"ok":False,"error":"Selected access point was not found"}),404
+    ok,error=_start_spectrum_scan(ap)
+    if not ok:
+        return jsonify({"ok":False,"error":error,"job":dict(spectrum_scan_job)}),409
+    return jsonify({"ok":True,"job":dict(spectrum_scan_job)})
+
+@app.route("/api/rf-scan/refresh",methods=["POST"])
+def rf_spectrum_scan_refresh():
+    if not private_api.configured:
+        return jsonify({"ok":False,"error":"Private/classic UniFi credentials are not configured"}),400
+    return jsonify({"ok":True,"spectrumScan":_collect_spectrum_scan_cache(),"job":dict(spectrum_scan_job)})
 
 @app.route("/api/rf-environment/sample",methods=["POST"])
 def rf_environment_sample_now():
@@ -2337,7 +2504,7 @@ def channel_plan():
         retry_trends=db.ap_retry_trends(15)
     except Exception:
         retry_trends={}
-    return jsonify({"ok":True,**build_channel_plan(snap,retry_trends,rf_environment_live)})
+    return jsonify({"ok":True,**build_channel_plan(snap,retry_trends,rf_environment_live,spectrum_scan_live)})
 
 @app.route("/api/system")
 def system_info():
@@ -2353,7 +2520,13 @@ def system_info():
         "lastMonitorCycle":last_monitor_cycle,
         "lastMonitorError":last_monitor_error,
         "database":stats,
-        "privateRf":_private_rf_status()
+        "privateRf":_private_rf_status(),
+        "spectrumScan":{
+            **spectrum_scan_live,
+            "job":dict(spectrum_scan_job),
+            "lastSampleAt":spectrum_scan_last_sample_at,
+            "lastError":spectrum_scan_last_error,
+        }
     })
 
 @app.route("/api/private-rf/discover",methods=["POST"])

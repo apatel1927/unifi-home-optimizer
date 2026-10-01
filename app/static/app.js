@@ -2151,6 +2151,8 @@ function renderRfEnvironment(d){
     ).join(""):'<tr><td colspan="6"><div class="empty">No raw neighboring signal fields were exposed in this sample.</div></td></tr>';
   }
 
+  renderSpectrumScan(d.spectrumScan||{},d.scanJob||{});
+
   const diag=document.getElementById("rfDiagnostics");
   if(diag){
     const ds=d.diagnostics||[];
@@ -2167,6 +2169,125 @@ function renderRfEnvironment(d){
       '<div><span>Positive magnitudes provisionally normalized</span><b>'+esc(quality.neighborRssiPositiveMagnitudeNormalized??0)+'</b></div>'+
       '<div><span>Missing / invalid provisional signal</span><b>'+esc(quality.neighborRssiMissingOrInvalid??0)+'</b></div>';
     diag.innerHTML=discovered+qualityRows;
+  }
+}
+
+function rfScanAge(seconds){
+  if(seconds==null||!Number.isFinite(Number(seconds)))return "Age unknown";
+  const s=Math.max(0,Number(seconds));
+  if(s<120)return "Just updated";
+  if(s<3600)return Math.round(s/60)+" min old";
+  if(s<86400)return (s/3600).toFixed(1)+" hr old";
+  return (s/86400).toFixed(1)+" days old";
+}
+
+function rfScanBandLatest(ap){
+  const latest=new Map();
+  for(const b of ap.bands||[]){
+    const key=String(b.band);
+    const old=latest.get(key);
+    if(!old || Number(b.scanEpoch||0)>Number(old.scanEpoch||0))latest.set(key,b);
+  }
+  return [...latest.values()].sort((a,b)=>Number(a.band||99)-Number(b.band||99));
+}
+
+function renderSpectrumScan(scan,job){
+  const notice=document.getElementById("rfScanNotice");
+  const box=document.getElementById("rfScanAccessPoints");
+  const aps=scan.accessPoints||[];
+  const running=!!job.running;
+  if(notice){
+    if(running){
+      notice.innerHTML='<b class="info">Spectrum scan running on '+esc(job.apName||job.apMac||"AP")+'…</b><br><span class="muted">One AP at a time. The page will refresh cached channel measurements when the controller reports completion.</span>';
+    }else if(job.status==="FAILED"||job.status==="TIMEOUT"){
+      notice.innerHTML='<b class="warn">Last spectrum scan '+esc(String(job.status||"").toLowerCase())+'</b><br><span class="muted">'+esc(job.error||"The controller did not return completed scan data.")+'</span>';
+    }else if(Number(scan.freshCount||0)>0){
+      notice.innerHTML='<b class="good">'+esc(scan.freshCount)+' AP'+(Number(scan.freshCount)===1?"":"s")+' with fresh spectrum data</b><br><span class="muted">Fresh means 24 hours or newer. Channel Planner can use these measurements for candidate scoring.</span>';
+    }else{
+      notice.innerHTML='<b class="info">No fresh spectrum scan data yet</b><br><span class="muted">Run one AP at a time during a low-usage period. Cached controller results are safe to refresh at any time.</span>';
+    }
+  }
+  if(!box)return;
+  if(!aps.length){
+    box.innerHTML='<div class="empty">No access points were returned for spectrum scanning yet.</div>';
+    return;
+  }
+  box.innerHTML=aps.map(ap=>{
+    const bands=rfScanBandLatest(ap);
+    const bandRows=bands.map(b=>{
+      const rows=b.rows||[];
+      const util=rows.filter(x=>x.utilizationPct!=null);
+      const quiet=util.length?[...util].sort((a,b)=>Number(a.utilizationPct)-Number(b.utilizationPct))[0]:null;
+      return '<div class="channel-rf-evidence"><span>'+esc(b.band)+' GHz</span><b>'+
+        esc(rows.length+' channel measurements · '+rfScanAge(b.ageSeconds)+
+          (quiet?' · lowest measured util '+Number(quiet.utilizationPct).toFixed(0)+'% @ ch '+quiet.channel:''))+
+        '</b></div>';
+    }).join("");
+    const isThis=running && String(job.apMac||"").toLowerCase()===String(ap.apMac||"").toLowerCase();
+    return '<div class="channel-card">'+
+      '<div class="channel-head"><div><h3>'+esc(ap.apName||ap.apMac||"Access point")+'</h3><span class="muted">'+esc(ap.model||"")+'</span></div>'+
+      '<span class="status-tag '+(ap.available?"ALREADY_OPTIMIZED":"PROTECTED")+'">'+(ap.available?"SCAN DATA":"NO DATA")+'</span></div>'+
+      '<div class="channel-metrics">'+
+        '<div><span>Rows</span><b>'+esc(ap.rowCount||0)+'</b></div>'+
+        '<div><span>Last scan</span><b>'+esc(ap.latestScanAt?fmtShortDate(ap.latestScanAt):"—")+'</b></div>'+
+        '<div><span>Age</span><b>'+esc(rfScanAge(ap.latestAgeSeconds))+'</b></div>'+
+        '<div><span>Status</span><b>'+(ap.inProgress?"Scanning":ap.available?"Cached":"Not scanned")+'</b></div>'+
+      '</div>'+
+      bandRows+
+      '<div class="channel-test-action"><button class="rf-scan-start-btn" data-ap-mac="'+esc(ap.apMac||"")+'" data-ap-name="'+esc(ap.apName||"")+'" '+(running?'disabled':'')+'>'+
+        (isThis?"Scanning…":"Run spectrum scan")+'</button></div>'+
+    '</div>';
+  }).join("");
+}
+
+async function refreshSpectrumScanCache(){
+  const btn=document.getElementById("rfScanRefreshBtn");
+  if(btn){btn.disabled=true;btn.textContent="Refreshing…";}
+  try{
+    const r=await fetch("/api/rf-scan/refresh",{method:"POST"});
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Unable to refresh spectrum scans");
+    await loadRfEnvironment();
+    await loadChannelPlan();
+  }catch(e){
+    const notice=document.getElementById("rfScanNotice");
+    if(notice)notice.innerHTML='<b class="warn">Spectrum refresh failed</b><br><span class="muted">'+esc(e.message||e)+'</span>';
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Refresh cached scans";}
+  }
+}
+
+async function startRfSpectrumScan(mac,name){
+  if(!mac)return;
+  const ok=window.confirm(
+    "Run a spectrum scan on "+(name||mac)+"?\n\n"+
+    "Some UniFi AP/firmware combinations briefly interrupt real-time Wi-Fi traffic during an off-channel scan. Only this AP will be scanned."
+  );
+  if(!ok)return;
+  try{
+    const r=await fetch("/api/rf-scan/start",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({apMac:mac,confirmDisruption:true})
+    });
+    const d=await r.json();
+    if(!d.ok)throw new Error(d.error||"Unable to start spectrum scan");
+    await loadRfEnvironment();
+    let polls=0;
+    const poll=async()=>{
+      polls++;
+      await loadRfEnvironment();
+      const job=rfEnvironmentData?.scanJob||{};
+      if(job.running && polls<52){
+        setTimeout(poll,5000);
+      }else{
+        await refreshSpectrumScanCache();
+      }
+    };
+    setTimeout(poll,5000);
+  }catch(e){
+    const notice=document.getElementById("rfScanNotice");
+    if(notice)notice.innerHTML='<b class="warn">Spectrum scan could not start</b><br><span class="muted">'+esc(e.message||e)+'</span>';
   }
 }
 
@@ -2201,6 +2322,12 @@ async function sampleRfEnvironmentNow(){
 
 document.getElementById("rfEnvironmentRange")?.addEventListener("change",loadRfEnvironment);
 document.getElementById("rfSampleNowBtn")?.addEventListener("click",sampleRfEnvironmentNow);
+document.getElementById("rfScanRefreshBtn")?.addEventListener("click",refreshSpectrumScanCache);
+document.getElementById("rfScanAccessPoints")?.addEventListener("click",e=>{
+  const btn=e.target.closest(".rf-scan-start-btn");
+  if(!btn)return;
+  startRfSpectrumScan(btn.dataset.apMac,btn.dataset.apName);
+});
 setInterval(()=>{
   if(document.querySelector("#rfenvironment.page.active"))loadRfEnvironment();
 },60000);
@@ -2219,7 +2346,9 @@ function renderChannelPlan(plan){
       '<div class="summary-card"><h3>Radios analyzed</h3><div class="big">'+items.length+'</div></div>'+
       '<div class="summary-card"><h3>Keep</h3><div class="big good">'+keep+'</div></div>'+
       '<div class="summary-card"><h3>Consider change</h3><div class="big '+(change?"warn":"good")+'">'+change+'</div></div>'+
-      '<div class="summary-card"><h3>Own-AP conflicts</h3><div class="big '+(conflicts.length?"warn":"good")+'">'+conflicts.length+'</div></div>';
+      '<div class="summary-card"><h3>Own-AP conflicts</h3><div class="big '+(conflicts.length?"warn":"good")+'">'+conflicts.length+'</div></div>'+
+      '<div class="summary-card"><h3>Fresh spectrum scans</h3><div class="big '+(Number(plan.spectrumScanFreshCount||0)?"good":"info")+'">'+esc(plan.spectrumScanFreshCount||0)+'</div></div>'+
+      '<div class="summary-card"><h3>Scan-backed changes</h3><div class="big '+(Number(plan.scanBackedCount||0)?"warn":"good")+'">'+esc(plan.scanBackedCount||0)+'</div></div>';
   }
 
   const box=document.getElementById("channelPlanCards");
@@ -2247,6 +2376,13 @@ function renderChannelPlan(plan){
             '<div><span>Retries</span><b class="'+retryClass(x.retryPct)+'">'+esc(retry)+'</b><small>'+esc(x.retryBasis||"")+'</small></div>'+
           '</div>'+
           (rfEvidence.length?'<div class="channel-rf-evidence"><span>Passive RF</span><b>'+esc(rfEvidence.join(" · "))+'</b></div>':'')+
+          (x.scanAt?'<div class="channel-rf-evidence"><span>Spectrum scan'+(x.scanBackedRecommendation?' · recommendation backed':'')+'</span><b>'+
+            esc(rfScanAge(x.scanAgeSeconds)+
+              (x.scanCandidateCount!=null?' · '+x.scanCandidateCount+' candidates':'')+
+              (x.scanCurrentScore!=null?' · current score '+Number(x.scanCurrentScore).toFixed(1):'')+
+              (x.scanRecommendedScore!=null?' → '+Number(x.scanRecommendedScore).toFixed(1):'')+
+              (x.scanImprovementScore!=null?' · local improvement '+Number(x.scanImprovementScore).toFixed(1):''))+
+            '</b></div>':'')+
           '<ul class="channel-actions">'+actions+'</ul>'+
           (x.testableChange
             ?'<div class="channel-test-action"><button class="start-test-btn" data-test-index="'+items.indexOf(x)+'">Create '+esc(x.band)+' GHz A/B/A test</button></div>'
