@@ -517,9 +517,20 @@
       <div class="section-head"><h2>RF collection diagnostics</h2></div>
       <div id="rfDiagnostics" class="panel system-list"></div>
 
+      <div class="section-head">
+        <div>
+          <h2>Spectrum scan</h2>
+          <span class="muted">Measured per-channel utilization, interference and neighboring-BSS counts from UniFi's cached spectrum tables.</span>
+        </div>
+        <button id="rfScanRefreshBtn" class="secondary">Refresh cached scans</button>
+      </div>
+      <div id="rfScanNotice" class="panel notice">
+        Reading cached spectrum scan data…
+      </div>
+      <div id="rfScanAccessPoints" class="channel-grid"></div>
       <div class="panel notice">
-        <b>Active spectrum scan safety</b><br>
-        <span class="muted">Active off-channel scanning is not run automatically. The supplied official Network API documentation does not expose a documented RF scan command, and an undocumented scan can interrupt clients. The app will keep active scanning disabled until the exact controller/AP command is separately verified.</span>
+        <b>Manual scan safety</b><br>
+        <span class="muted">Spectrum scans are never started automatically. A manual scan can briefly interrupt real-time Wi-Fi traffic on some AP/firmware combinations, so the optimizer scans only one AP at a time and requires confirmation. Scan results can influence channel recommendations, but every proposed radio change still goes through the A/B/A verification and rollback workflow.</span>
       </div>
     </section>
 
@@ -533,7 +544,7 @@
       </div>
 
       <div class="panel notice">
-        Safe advisory mode: the planner uses passive current-channel RF telemetry when your controller exposes it, alongside retry history and own-AP overlap. Raw neighboring signal fields are diagnostic only and are not used to select or score a channel until their controller semantics are independently validated. Active/off-channel scanning remains disabled until its controller-specific command is separately verified. Radio changes still use the gated A/B/A workflow rather than silent tuning.
+        Safe advisory mode: the planner combines fresh spectrum-scan measurements with passive RF telemetry, retry history and own-AP overlap. Fresh scan data can rank candidate 2.4 GHz channels and 5 GHz blocks using measured utilization, interference and neighboring-BSS counts. Raw neighboring RSSI/signal fields remain diagnostic only. Radio changes still use the gated one-radio-at-a-time A/B/A workflow rather than silent tuning.
       </div>
 
       <div class="summary-grid" id="channelSummaryCards"></div>
