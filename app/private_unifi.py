@@ -166,6 +166,43 @@ class PrivateUniFiAPI:
     def rogue_aps(self):
         return self._items(self.classic("GET","/stat/rogueap"))
 
+    def spectrum_scan_state(self, mac):
+        """Read cached/current spectrum scan state for one AP.
+
+        UniFi controller builds differ on whether the MAC is accepted with
+        separators, so try the normal form first and a compact form second.
+        """
+        mac=str(mac or "").strip().lower()
+        if not mac:
+            return {"ok":False,"status":0,"error":"AP MAC is required","items":[]}
+        last=None
+        for candidate in (mac,mac.replace(":","").replace("-","")):
+            result=self.classic("GET",f"/stat/spectrum-scan/{candidate}")
+            last=result
+            if result.get("ok"):
+                return {
+                    "ok":True,
+                    "status":result.get("status"),
+                    "items":self._items(result),
+                }
+        return {
+            "ok":False,
+            "status":(last or {}).get("status",0),
+            "error":(last or {}).get("error") or (last or {}).get("data") or "Spectrum scan state unavailable",
+            "items":[],
+        }
+
+    def start_spectrum_scan(self, mac):
+        """Request a manual RF spectrum scan on one AP.
+
+        This classic endpoint is undocumented and may be rejected by some
+        controller/AP firmware. Callers must treat failure as non-fatal.
+        """
+        mac=str(mac or "").strip().lower()
+        if not mac:
+            return {"ok":False,"status":0,"error":"AP MAC is required"}
+        return self.classic("POST","/cmd/devmgr",{"cmd":"spectrum-scan","mac":mac})
+
     def qos_rules(self):
         """Read gateway QoS rules from UniFi Network's local v2 API.
 
