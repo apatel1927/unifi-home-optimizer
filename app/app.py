@@ -729,7 +729,11 @@ def _spectrum_scan_worker(ap):
     try:
         result=private_api.start_spectrum_scan(mac)
         if not result.get("ok"):
-            raise RuntimeError("Controller rejected spectrum scan: "+str(result.get("error") or result.get("data") or result.get("status")))
+            raise RuntimeError(
+                "Controller rejected the manual spectrum-scan command. "
+                "Use UniFi Devices > AP > Insights > RF Environment > Scan, then click Refresh cached scans in the optimizer. "
+                "Controller response: "+str(result.get("error") or result.get("data") or result.get("status"))
+            )
         db.log("RF_SPECTRUM_SCAN",name,"Manual spectrum scan requested","ACCEPTED")
         # Poll cached scan state until the controller reports completion or timeout.
         deadline=time.monotonic()+240
