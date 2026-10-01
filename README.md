@@ -254,6 +254,11 @@ The first audit release checks device health, firmware availability, duplicate a
 
 Future audit releases can add port-forward/UPnP exposure, deeper switch error/PoE analysis, remote-access posture, VPN posture and change auditing as those data sources are verified.
 
+### Spectrum-scan-aware channel planning
+
+v0.22.6 adds read-only cached UniFi spectrum-table collection plus an explicitly confirmed, one-AP-at-a-time manual spectrum scan action. Fresh scan data (24 hours or newer) can score 2.4 GHz channels and 5 GHz 80 MHz blocks using measured utilization, interference and neighboring-BSS counts. Manual scans are never scheduled automatically because controller/AP combinations can briefly interrupt real-time Wi-Fi traffic. Scan-backed recommendations remain advisory until the existing A/B/A workflow validates the change and rolls back any regression.
+
+
 
 ## Wired and switch audit
 
