@@ -22,10 +22,11 @@ from .wired_audit import build_wired_audit
 from .export_bundle import build_zip_bytes, build_json_bytes, compact_support_summary, sanitize
 from .ai_advisor import analyze_with_openai, generate_ai_proposals
 from .rf_environment import parse_rf_environment
+from .rf_scan import normalize_spectrum_scan, scan_summary
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.5"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.6"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -82,6 +83,21 @@ rf_environment_last_sample_monotonic = 0.0
 rf_environment_last_sample_at = None
 rf_environment_last_error = None
 rf_environment_live = {"radios":[],"neighbors":[],"diagnostics":[]}
+spectrum_scan_sample_seconds = 300
+spectrum_scan_last_sample_monotonic = 0.0
+spectrum_scan_last_sample_at = None
+spectrum_scan_last_error = None
+spectrum_scan_live = {"accessPoints":[],"availableCount":0,"freshCount":0}
+spectrum_scan_job_lock = threading.Lock()
+spectrum_scan_job = {
+    "running":False,
+    "apMac":None,
+    "apName":None,
+    "startedAt":None,
+    "completedAt":None,
+    "status":"IDLE",
+    "error":None,
+}
 
 def _wan_targets():
     gateway=urlparse(UNIFI_URL).hostname
