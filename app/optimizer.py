@@ -349,17 +349,20 @@ def _scan_candidates_for(ap, band, width, spectrum_scans):
             lambda key,items:int(key),
         )
     elif band==5:
+        known_blocks={
+            "36-48":36,"52-64 DFS":52,"100-112 DFS":100,
+            "116-128 DFS":116,"132-144 DFS":132,"149-161":149
+        }
         if exact:
-            source=exact
+            exact_known=[x for x in exact if _five_ghz_block(x.get("channel"),80) in known_blocks]
+            source=exact_known or [x for x in rows if x.get("widthMHz")==20]
         else:
             source=[x for x in rows if x.get("widthMHz")==20]
         candidates=_aggregate_scan_rows(
             source,
-            lambda x:_five_ghz_block(x.get("channel"),80),
-            lambda key,items:{
-                "36-48":36,"52-64 DFS":52,"100-112 DFS":100,
-                "116-128 DFS":116,"132-144 DFS":132,"149-161":149
-            }.get(key,items[0][0].get("channel")),
+            lambda x:(_five_ghz_block(x.get("channel"),80)
+                      if _five_ghz_block(x.get("channel"),80) in known_blocks else None),
+            lambda key,items:known_blocks.get(key),
         )
     elif band==6:
         source=exact
@@ -653,7 +656,7 @@ def build_channel_plan(snapshot, retry_trends=None, rf_environment=None, spectru
         "automaticRadioWritesAvailable":False,
         "neighborRssiTrusted":False,
         "notes":[
-            "Planner priority is: confirmed A/B/A history and current stability first; fresh spectrum-scan evidence for candidate channels second; passive current-channel telemetry and neighbor counts next; generic channel heuristics last.",
+            "Fresh spectrum-scan evidence is used to rank candidate channels when available; existing A/B/A history remains the final validation layer because scan snapshots alone do not prove a real client-performance improvement.",
             "Fresh spectrum scans (24 hours or newer) can score candidate 2.4 GHz channels and 5 GHz 80 MHz blocks using measured utilization, neighboring-BSS count, and interference. Changes are only proposed when the coordinated site-wide score improves by a meaningful margin.",
             "Spectrum scans are snapshots. Any scan-backed channel change still goes through the existing one-radio-at-a-time A/B/A workflow and is rolled back if retries or topology get worse.",
             "Neighbor RSSI remains observational only and is not used in scan/channel scoring until controller field semantics are independently validated.",
