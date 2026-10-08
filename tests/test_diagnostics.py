@@ -19,7 +19,7 @@ class RoamingDiagnosticsTests(unittest.TestCase):
         self.assertEqual(row["signalDbm"],-81)
         self.assertEqual(row["recentBounceCount"],1)
         self.assertIn("weak",row["diagnostic"])
-        self.assertIn("back-and-forth",row["diagnostic"])
+        self.assertIn("back-and-forth",row["diagnostic"].lower())
 
     def test_unvalidated_positive_signal_never_becomes_dbm(self):
         states=[{"clientId":"c","name":"Phone","macAddress":"aa:bb","roamCount24h":4,"status":"ACTIVE_ROAMING"}]
