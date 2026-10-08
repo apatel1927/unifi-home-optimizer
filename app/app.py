@@ -1117,7 +1117,11 @@ def report_data():
     for w in snap["wifiBroadcasts"]:
         row=dict(w); row["optimizerStatus"]=wifi_status(w); wifi.append(row)
     try:
-        roaming_data = db.roaming_summary(24)
+        roaming_data = build_roaming_diagnostics(
+            db.roaming_summary(24),
+            _enrich_client_inventory(snap),
+            db.recent_roams(100),
+        )
     except Exception as e:
         print("Roaming summary error:", e, flush=True)
         roaming_data = []
@@ -2553,6 +2557,12 @@ def channel_plan():
     plan=build_channel_plan(snap,retry_trends,rf_environment_live,spectrum_scan_live)
     return jsonify({"ok":True,**plan,"rfExecution":_rf_execution(plan)})
 
+def _system_rf_execution():
+    snap=build_snapshot(api)
+    plan=build_channel_plan(snap,db.ap_retry_trends(15),rf_environment_live,spectrum_scan_live) if snap else None
+    return _rf_execution(plan)
+
+
 @app.route("/api/system")
 def system_info():
     stats=db.database_stats()
@@ -2568,7 +2578,7 @@ def system_info():
         "lastMonitorError":last_monitor_error,
         "database":stats,
         "privateRf":_private_rf_status(),
-        "rfExecution":_rf_execution(build_channel_plan(build_snapshot(api),db.ap_retry_trends(15),rf_environment_live,spectrum_scan_live)) if monitor_started else _rf_execution(),
+        "rfExecution":_system_rf_execution(),
         "spectrumScan":{
             **spectrum_scan_live,
             "job":dict(spectrum_scan_job),
