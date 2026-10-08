@@ -547,6 +547,7 @@
         Safe advisory mode: the planner combines fresh spectrum-scan measurements with passive RF telemetry, retry history and own-AP overlap. Fresh scan data can rank candidate 2.4 GHz channels and 5 GHz blocks using measured utilization, interference and neighboring-BSS counts. Raw neighboring RSSI/signal fields remain diagnostic only. Radio changes still use the gated one-radio-at-a-time A/B/A workflow rather than silent tuning.
       </div>
 
+      <div id="rfExecutionNotice" class="panel notice" role="status" aria-live="polite">Loading Auto RF decision status…</div>
       <div class="summary-grid" id="channelSummaryCards"></div>
 
       <div class="section-head">
@@ -917,11 +918,11 @@
         <button class="secondary" onclick="loadRoaming()">Refresh</button>
       </div>
       <div class="panel notice">
-        Signal strength/RSSI is not exposed by the official connected-client API used by this app, so this page does not claim which AP has the strongest signal yet. It tracks real AP changes and highlights excessive roaming.
+        Current RSSI is shown only when the classic UniFi client inventory provides a valid dBm value. It is not a comparison against neighboring APs, and does not establish the best AP. Offline clients and incomplete recent-event samples are labeled.
       </div>
       <div class="summary-grid" id="roamingSummaryCards"></div>
       <div class="section-head"><h2>Wireless clients</h2></div>
-      <div class="panel table-wrap"><table><thead><tr><th>Client</th><th>Current AP</th><th>24h AP changes</th><th>Last AP change</th><th>Status</th></tr></thead><tbody id="roamingClientTable"></tbody></table></div>
+      <div class="panel table-wrap"><table><thead><tr><th>Client</th><th>Current AP</th><th>24h AP changes</th><th>Current RSSI</th><th>Channel</th><th>Diagnostics</th><th>Status</th></tr></thead><tbody id="roamingClientTable"></tbody></table></div>
       <div class="section-head"><h2>Recent AP changes</h2></div>
       <div class="panel table-wrap"><table><thead><tr><th>Time</th><th>Client</th><th>From</th><th>To</th></tr></thead><tbody id="roamEventTable"></tbody></table></div>
     </section>
@@ -1060,6 +1061,7 @@
             <span class="eyebrow">PRIVATE / CLASSIC API</span>
             <h3 id="privateRfStatus">Checking…</h3>
             <p id="privateRfDetail" class="muted">Checking private RF readiness.</p>
+            <div id="rfSystemExecution" class="rf-execution-detail" role="status">Checking live RF decision state…</div>
           </div>
           <label class="switch">
             <input id="privateRfAutoToggle" type="checkbox">
