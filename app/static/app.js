@@ -117,7 +117,7 @@ async function loadReport(){
     document.getElementById("internetSummary").textContent=internetLatest?(internetLatest.online?"ONLINE":"OFFLINE"):"LEARNING";
     document.getElementById("internetSummary").className=internetLatest?(internetLatest.online?"good":"bad"):"info";
     document.getElementById("autoToggle").checked=d.autoOptimizeEnabled;
-    renderOverview();renderAPs();renderBroadcasts();renderClients();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);renderChannelPlan(d.channelPlan);renderOptimizationTests(d.optimizationTests||[]);
+    renderOverview();renderAPs();renderBroadcasts();renderClients();renderRoamingSummary(d.roaming||[]);renderInternet(d.internet,d.gateway);renderChannelPlan({...d.channelPlan,rfExecution:d.rfExecution});renderOptimizationTests(d.optimizationTests||[]);
   }catch(e){
     document.getElementById("controllerPill").textContent="Controller error";
     document.getElementById("controllerPill").className="pill bad";
@@ -1264,12 +1264,14 @@ function renderRoamingSummary(items){
   const total=items.length;
   const active=items.filter(x=>x.roamCount24h>0).length;
   const frequent=items.filter(x=>x.status==="FREQUENT_ROAMING").length;
-  const stable=items.filter(x=>x.status==="STABLE").length;
+  const connected=items.filter(x=>x.connectedNow).length;
+  const signal=items.filter(x=>x.signalDbm!=null).length;
   box.innerHTML=
-    `<div class="summary-card"><h3>Wireless clients tracked</h3><div class="big">${total}</div></div>`+
-    `<div class="summary-card"><h3>Roamed in 24h</h3><div class="big">${active}</div></div>`+
-    `<div class="summary-card"><h3>Stable</h3><div class="big good">${stable}</div></div>`+
-    `<div class="summary-card"><h3>Frequent roaming</h3><div class="big ${frequent?"warn":"good"}">${frequent}</div></div>`;
+    '<div class="summary-card"><h3>Wireless clients tracked</h3><div class="big">'+total+'</div></div>'+
+    '<div class="summary-card"><h3>Currently connected</h3><div class="big">'+connected+'</div></div>'+
+    '<div class="summary-card"><h3>AP changes in 24h</h3><div class="big">'+active+'</div></div>'+
+    '<div class="summary-card"><h3>Frequent roaming</h3><div class="big '+(frequent?"warn":"good")+'">'+frequent+'</div></div>'+
+    '<div class="summary-card"><h3>Current RSSI readings</h3><div class="big">'+signal+'</div></div>';
 }
 
 async function loadRoaming(){
@@ -1279,12 +1281,20 @@ async function loadRoaming(){
   const ct=document.getElementById("roamingClientTable"); ct.innerHTML="";
   (d.clients||[]).forEach(x=>{
     const cls=x.status==="FREQUENT_ROAMING"?"NEEDS_ATTENTION":x.status==="STABLE"?"ALREADY_OPTIMIZED":"PROTECTED";
+    const rssi=x.signalDbm==null?"—":Number(x.signalDbm).toFixed(0)+" dBm";
+    const title=(x.connectedNow?"Connected":"Historical/offline")+(x.recentBounceCount?" · "+x.recentBounceCount+" recent return-to-AP patterns":"");
     ct.insertAdjacentHTML("beforeend",
-      `<tr><td>${esc(x.name)}</td><td>${esc(x.currentApName)}</td><td>${esc(x.roamCount24h)}</td><td>${x.lastRoam?esc(new Date(x.lastRoam.ts).toLocaleString()):"—"}</td><td><span class="status-tag ${cls}">${esc(x.status)}</span></td></tr>`);
+      '<tr><td><b>'+esc(x.name)+'</b><div class="muted">'+esc(title)+'</div></td>'+
+      '<td>'+esc(x.currentApName)+'</td>'+
+      '<td>'+esc(x.roamCount24h)+'</td>'+
+      '<td class="'+(x.signalDbm!=null&&x.signalDbm<=-75?"warn":"")+'">'+esc(rssi)+'</td>'+
+      '<td>'+esc(x.channel??"—")+'</td>'+
+      '<td class="rf-diagnostic-cell">'+esc(x.diagnostic||x.detail||"—")+'</td>'+
+      '<td><span class="status-tag '+cls+'">'+esc(x.status)+'</span></td></tr>');
   });
   const et=document.getElementById("roamEventTable"); et.innerHTML="";
   (d.events||[]).forEach(x=>et.insertAdjacentHTML("beforeend",
-    `<tr><td>${esc(new Date(x.ts).toLocaleString())}</td><td>${esc(x.name)}</td><td>${esc(x.from_ap_name)}</td><td>${esc(x.to_ap_name)}</td></tr>`));
+    '<tr><td>'+esc(new Date(x.ts).toLocaleString())+'</td><td>'+esc(x.name)+'</td><td>'+esc(x.from_ap_name)+'</td><td>'+esc(x.to_ap_name)+'</td></tr>'));
 }
 
 
@@ -2333,9 +2343,25 @@ setInterval(()=>{
 },60000);
 
 
+function renderRfExecution(state){
+  if(!state)return;
+  const status=document.getElementById("rfExecutionNotice");
+  const system=document.getElementById("rfSystemExecution");
+  const isWarning=state.phase==="ROLLBACK_REQUIRED"||state.phase==="BLOCKED";
+  const details='<b>'+esc(state.label||state.phase)+'</b><div class="muted">'+esc(state.detail||"")+'</div>'+
+    '<div class="muted">Eligible candidates: '+esc(state.candidateCount??0)+
+    ' · Scan-backed: '+esc(state.scanBackedCandidateCount??0)+
+    ' · Active A/B/A tests: '+esc(state.activeTestCount??0)+
+    ' · Last passive RF sample: '+esc(fmtDateTime(state.lastPassiveSampleAt))+'</div>'+
+    ((state.blockers||[]).length?'<div class="muted">Telemetry/access notes: '+esc(state.blockers.join(" · "))+'</div>':'');
+  if(status){status.innerHTML=details;status.classList.toggle("rf-attention",isWarning);}
+  if(system){system.innerHTML=details;system.classList.toggle("rf-attention",isWarning);}
+}
+
 function renderChannelPlan(plan){
   if(!plan)return;
   window.channelPlanData=plan;
+  renderRfExecution(plan.rfExecution);
   const items=plan.items||[];
   const conflicts=plan.conflicts||[];
   const keep=items.filter(x=>x.status==="KEEP").length;
@@ -2577,7 +2603,16 @@ function renderOptimizationTests(items){
     }else if(t.status==="ROLLBACK_MONITORING"){
       controls='<span class="muted">Rollback verification is running automatically.</span> <button class="secondary cancel-test-btn" data-id="'+t.id+'">Cancel test</button>';
     }else if(t.status==="CANCELLED"){
-      controls='<button class="retest-cancelled-btn" data-id="'+t.id+'">Retest cancelled change</button> <span class="muted">Creates a fresh baseline and a new A/B/A test using the same proposed B setting.</span>';
+      const readiness=t.retestReadiness||{};
+      const restore=readiness.original||{};
+      const current=readiness.current||{};
+      if(readiness.status==="RESTORE_REQUIRED"){
+        controls='<span class="warn">Restore original A first: '+esc(restore.channel)+' / '+esc(restore.widthMHz)+' MHz. Current: '+esc(current.channel)+' / '+esc(current.widthMHz)+' MHz.</span> <button class="secondary retest-cancelled-btn" data-id="'+t.id+'" disabled>Restore A to retest</button>';
+      }else if(readiness.status==="ORIGINAL_UNKNOWN"||readiness.status==="RADIO_UNAVAILABLE"){
+        controls='<span class="warn">Cannot safely retest until the original RF settings and live radio are available.</span>';
+      }else{
+        controls='<button class="retest-cancelled-btn" data-id="'+t.id+'">Retest cancelled change</button> <span class="muted">Starts a separate test with a fresh baseline. Original settings must be active.</span>';
+      }
     }
 
     if(pt){
@@ -2656,7 +2691,7 @@ document.addEventListener("click",async e=>{
   }
   const cancel=e.target.closest(".cancel-test-btn");
   if(cancel){
-    if(!confirm("Cancel this RF test? The collected history will remain, but the test will stop monitoring."))return;
+    if(!confirm("Cancel this RF test? Cancellation DOES NOT restore the AP channel/width. If the B setting is active, restore the original A setting in UniFi before a retest."))return;
     await fetch("/api/optimization-tests/"+cancel.dataset.id+"/cancel",{method:"POST"});
     await loadOptimizationTests();
     await loadChannelPlan();
@@ -2733,6 +2768,7 @@ async function loadSystem(){
   document.getElementById("sysLastController").textContent=fmtDateTime(d.lastControllerSuccess);
   document.getElementById("sysLastCycle").textContent=fmtDateTime(d.lastMonitorCycle);
   document.getElementById("sysLastError").textContent=d.lastMonitorError||"None";
+  renderRfExecution(d.rfExecution);
   const pr=d.privateRf||{};
   const prStatus=document.getElementById("privateRfStatus");
   const prDetail=document.getElementById("privateRfDetail");
