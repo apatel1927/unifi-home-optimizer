@@ -23,10 +23,11 @@ from .export_bundle import build_zip_bytes, build_json_bytes, compact_support_su
 from .ai_advisor import analyze_with_openai, generate_ai_proposals
 from .rf_environment import parse_rf_environment
 from .rf_scan import normalize_spectrum_scan, scan_summary
+from .diagnostics import build_roaming_diagnostics, rf_execution_state
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.6"
+VERSION = open("/app/VERSION").read().strip() if os.path.exists("/app/VERSION") else "0.22.7"
 UNIFI_URL = os.getenv("UNIFI_URL", "https://192.168.1.1")
 API_KEY = os.getenv("UNIFI_API_KEY", "")
 POLL_INTERVAL = max(int(os.getenv("POLL_INTERVAL_SECONDS", "60")), 30)
@@ -606,6 +607,10 @@ def _enrich_client_inventory(snapshot):
         row["switchPort"]=classic.get("sw_port")
         row["radioName"]=classic.get("radio_name") or classic.get("radio")
         row["channel"]=classic.get("channel")
+        # Classic UniFi client 'signal' is RSSI in dBm on controllers that expose
+        # it. Never treat an unsigned quality percentage as an RSSI measurement.
+        signal=_num(classic.get("signal"))
+        row["signalDbm"]=signal if signal is not None and -100 <= signal <= -15 else None
         row["clientSource"]="official+classic" if classic else "official"
     return clients
 
@@ -792,6 +797,18 @@ def _start_spectrum_scan(ap):
     finally:
         spectrum_scan_job_lock.release()
 
+def _rf_execution(plan=None):
+    return rf_execution_state(
+        db.get_setting("auto_rf_enabled","0")=="1",
+        private_api.configured,
+        db.get_setting("private_rf_write_verified","0")=="1",
+        plan,
+        db.list_optimization_tests(100),
+        rf_environment_last_sample_at,
+        rf_environment_last_error,
+    )
+
+
 def _build_support_context():
     snap=build_snapshot(api)
     if not snap:
@@ -858,6 +875,7 @@ def _build_support_context():
             "privateRfWriteVerified":db.get_setting("private_rf_write_verified","0")=="1",
             "privateRfConfigured":private_api.configured,
             "rfTestActive":_rf_test_active(),
+            "rfExecution":_rf_execution(channel_plan),
         },
         "healthHistory24h":db.health_history(24),
         "roaming24h":db.roaming_summary(24),
@@ -1122,6 +1140,7 @@ def report_data():
         "retryTrends":retry_trends,
         "apBaselines":ap_baselines,
         "channelPlan":channel_plan,
+        "rfExecution":_rf_execution(channel_plan),
         "gateway":gateway,
         "internet":internet_data,
         "optimizationTests":evaluate_optimization_tests(snap),
@@ -1488,6 +1507,22 @@ def evaluate_optimization_tests(snapshot=None):
         if snapshot:
             for item in items:
                 item["topology"]=_topology_metrics_for_test(snapshot,item)
+                if item.get("status")=="CANCELLED":
+                    original=(item.get("original_channel"),item.get("original_width_mhz"))
+                    live=_current_radio_config(snapshot,item.get("ap_id"),item.get("band"))
+                    if not live:
+                        readiness="RADIO_UNAVAILABLE"
+                    elif None in original:
+                        readiness="ORIGINAL_UNKNOWN"
+                    elif original==(live.get("channel"),live.get("widthMHz")):
+                        readiness="READY"
+                    else:
+                        readiness="RESTORE_REQUIRED"
+                    item["retestReadiness"]={
+                        "status":readiness,
+                        "original":{"channel":original[0],"widthMHz":original[1]},
+                        "current":{"channel":live.get("channel"),"widthMHz":live.get("widthMHz")} if live else None,
+                    }
         return items
     except Exception:
         return []
@@ -2128,7 +2163,18 @@ def logs():
 
 @app.route("/api/roaming")
 def roaming():
-    return jsonify({"ok":True,"clients":db.roaming_summary(24),"events":db.recent_roams(100)})
+    snap=build_snapshot(api)
+    live=_enrich_client_inventory(snap) if snap else []
+    events=db.recent_roams(100)
+    states=db.roaming_summary(24)
+    return jsonify({
+        "ok":True,
+        "clients":build_roaming_diagnostics(states,live,events),
+        "events":events,
+        "liveInventoryAvailable":snap is not None,
+        "eventLimit":100,
+        "signalMethod":"Unvalidated AP-to-AP signal comparison is never performed. Current RSSI comes only from classic client telemetry when it is a valid negative dBm value.",
+    })
 
 @app.route("/api/internet")
 def internet():
@@ -2504,7 +2550,8 @@ def channel_plan():
         retry_trends=db.ap_retry_trends(15)
     except Exception:
         retry_trends={}
-    return jsonify({"ok":True,**build_channel_plan(snap,retry_trends,rf_environment_live,spectrum_scan_live)})
+    plan=build_channel_plan(snap,retry_trends,rf_environment_live,spectrum_scan_live)
+    return jsonify({"ok":True,**plan,"rfExecution":_rf_execution(plan)})
 
 @app.route("/api/system")
 def system_info():
@@ -2521,6 +2568,7 @@ def system_info():
         "lastMonitorError":last_monitor_error,
         "database":stats,
         "privateRf":_private_rf_status(),
+        "rfExecution":_rf_execution(build_channel_plan(build_snapshot(api),db.ap_retry_trends(15),rf_environment_live,spectrum_scan_live)) if monitor_started else _rf_execution(),
         "spectrumScan":{
             **spectrum_scan_live,
             "job":dict(spectrum_scan_job),
