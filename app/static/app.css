@@ -1030,3 +1030,11 @@ tbody tr:hover{background:rgba(79,140,255,.045)}
   .brand h1{font-size:15px}
   .mobile-nav-toggle{min-width:118px;font-size:11px}
 }
+
+/* v0.22.7: read-only roaming diagnosis and RF decision clarity */
+.rf-attention{border-left:4px solid var(--warn)!important}
+.rf-execution-detail{margin-top:10px;padding:12px;border-radius:8px;background:var(--panel2);line-height:1.5}
+.rf-execution-detail .muted,.rf-execution-detail b{display:block}
+.rf-diagnostic-cell{min-width:210px;max-width:370px;white-space:normal;line-height:1.4}
+#roamingClientTable td{vertical-align:top}
+@media(max-width:800px){.rf-diagnostic-cell{min-width:170px}}
